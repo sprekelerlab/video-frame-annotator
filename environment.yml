@@ -1,0 +1,14 @@
+name: video-reviewer
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.9
+  - mpv  # libmpv library (required by python-mpv)
+  - opencv
+  - matplotlib
+  - numpy
+  - pandas
+  - pip
+  - pip:
+    - python-mpv  # Python bindings for mpv (only available via pip)

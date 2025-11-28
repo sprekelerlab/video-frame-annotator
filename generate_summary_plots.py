@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+"""
+Generate summary plots showing frames around threat detection.
+
+Creates montage plots with one row per trial, showing 3 frames before,
+the threat frame, and 3 frames after threat detection.
+
+Plots are organized by the same folder structure as the source videos.
+"""
+
+import argparse
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from pathlib import Path
+
+
+def extract_frame(video_path, frame_number):
+    """
+    Extract a specific frame from a video file.
+
+    Parameters
+    ----------
+    video_path : str or Path
+        Path to video file
+    frame_number : int
+        Frame number to extract (0-indexed)
+
+    Returns
+    -------
+    numpy.ndarray or None
+        Frame as BGR image array, or None if extraction failed
+    """
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return None
+
+    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+    ret, frame = cap.read()
+    cap.release()
+
+    if ret:
+        # Convert BGR to RGB for matplotlib
+        return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    return None
+
+
+def find_video_file(trial_name, video_folder):
+    """
+    Find video file matching trial name.
+
+    Parameters
+    ----------
+    trial_name : str
+        Name of trial (filename without extension)
+    video_folder : Path
+        Root folder to search for videos
+
+    Returns
+    -------
+    Path or None
+        Path to video file if found
+    """
+    video_extensions = [".avi", ".mp4", ".mov", ".mkv"]
+    for ext in video_extensions:
+        for video_file in video_folder.rglob(f"{trial_name}{ext}"):
+            if video_file.exists():
+                return video_file
+    return None
+
+
+def create_summary_plot(
+    group_name, trials_data, video_folder, output_path, frames_before=3, frames_after=3
+):
+    """
+    Create a summary plot for one group of trials.
+
+    Parameters
+    ----------
+    group_name : str
+        Name/path of the group (e.g., "349/hab")
+    trials_data : list of dict
+        List of dicts with 'trial' and 'frame' keys
+    video_folder : Path
+        Root folder containing videos
+    output_path : Path
+        Where to save the plot
+    frames_before : int, optional
+        Number of frames before threat to show (default: 3)
+    frames_after : int, optional
+        Number of frames after threat to show (default: 3)
+    """
+    num_trials = len(trials_data)
+    num_cols = frames_before + 1 + frames_after  # 7 total
+
+    if num_trials == 0:
+        print(f"No trials found for {group_name}")
+        return
+
+    # Create figure with black background
+    fig, axes = plt.subplots(
+        num_trials, num_cols, figsize=(num_cols * 2, num_trials * 2), facecolor="black"
+    )
+    fig.patch.set_facecolor("black")
+
+    # Handle single trial case
+    if num_trials == 1:
+        axes = axes.reshape(1, -1)
+
+    # Process each trial
+    for row_idx, trial_data in enumerate(trials_data):
+        trial_name = trial_data["trial"]
+        threat_frame = trial_data["frame"]
+
+        # Find video file
+        video_file = find_video_file(trial_name, video_folder)
+        if not video_file:
+            print(f"Warning: Video not found for trial {trial_name}")
+            # Fill with black frames
+            for col_idx in range(num_cols):
+                axes[row_idx, col_idx].imshow(np.zeros((100, 100, 3), dtype=np.uint8))
+                axes[row_idx, col_idx].axis("off")
+            continue
+
+        # Extract frames
+        frame_images = []
+        for offset in range(-frames_before, frames_after + 1):
+            target_frame = max(0, threat_frame + offset)
+            frame = extract_frame(video_file, target_frame)
+            if frame is None:
+                # Use black frame if extraction failed
+                frame = np.zeros((100, 100, 3), dtype=np.uint8)
+            frame_images.append(frame)
+
+        # Display frames
+        for col_idx, frame_img in enumerate(frame_images):
+            ax = axes[row_idx, col_idx]
+            ax.imshow(frame_img)
+            ax.axis("off")
+
+            # Highlight threat frame (middle column)
+            if col_idx == frames_before:
+                # Add red border
+                for spine in ax.spines.values():
+                    spine.set_edgecolor("red")
+                    spine.set_linewidth(3)
+
+    # Add title (use group name which mirrors folder structure)
+    display_name = group_name.replace("/", " / ").replace("\\", " / ")
+    fig.suptitle(
+        f"{display_name}\n(Red border = threat frame)",
+        color="white",
+        fontsize=14,
+        y=0.995,
+    )
+
+    plt.tight_layout(rect=[0, 0, 1, 0.98])
+    plt.savefig(output_path, facecolor="black", dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Created plot: {output_path}")
+
+
+def generate_all_plots(output_dir, video_folder, frames_before=3, frames_after=3):
+    """
+    Generate summary plots for all groups (mirroring source folder structure).
+
+    Parameters
+    ----------
+    output_dir : Path
+        Output directory containing results.csv
+    video_folder : Path
+        Root folder containing videos
+    frames_before : int, optional
+        Number of frames before threat (default: 3)
+    frames_after : int, optional
+        Number of frames after threat (default: 3)
+    """
+    results_csv = output_dir / "results.csv"
+    if not results_csv.exists():
+        raise ValueError(f"results.csv not found: {results_csv}")
+
+    df = pd.read_csv(results_csv)
+
+    # Check if 'group' column exists (new format)
+    if "group" not in df.columns:
+        # Fallback for old format with animal/session columns
+        if "animal" in df.columns and "session" in df.columns:
+            df["group"] = df["animal"].astype(str) + "/" + df["session"].astype(str)
+        else:
+            # No grouping info, put all in one plot
+            df["group"] = "all"
+
+    # Create summary_plots directory
+    plots_dir = output_dir / "summary_plots"
+    plots_dir.mkdir(exist_ok=True)
+
+    # Group by the group column (mirrors source folder structure)
+    grouped = df.groupby("group")
+
+    for group_name, group in grouped:
+        trials_data = group[["trial", "frame"]].to_dict("records")
+
+        # Create output path mirroring the group structure
+        # e.g., group "349/hab" -> "summary_plots/349/hab.png"
+        # Handle "." or empty group (files in root)
+        if group_name in [".", "", "unknown"]:
+            output_path = plots_dir / "all_trials.png"
+        else:
+            # Convert group path to output filename
+            # "349/hab" -> "349_hab.png" or nested "349/hab.png"
+            group_path = Path(group_name)
+            output_subdir = plots_dir / group_path.parent
+            output_subdir.mkdir(parents=True, exist_ok=True)
+            output_path = output_subdir / f"{group_path.name}.png"
+
+        create_summary_plot(
+            group_name, trials_data, video_folder, output_path, frames_before, frames_after
+        )
+
+
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(description="Generate summary plots from annotation results")
+    parser.add_argument("output_dir", help="Path to output directory containing results.csv")
+    parser.add_argument(
+        "--video-folder",
+        required=True,
+        help="Path to root video folder (same as used for scoring)",
+    )
+    parser.add_argument(
+        "--frames-before",
+        type=int,
+        default=3,
+        help="Number of frames before threat to show (default: 3)",
+    )
+    parser.add_argument(
+        "--frames-after",
+        type=int,
+        default=3,
+        help="Number of frames after threat to show (default: 3)",
+    )
+
+    args = parser.parse_args()
+
+    output_dir = Path(args.output_dir)
+    video_folder = Path(args.video_folder)
+
+    if not video_folder.exists():
+        raise ValueError(f"Video folder not found: {video_folder}")
+
+    generate_all_plots(output_dir, video_folder, args.frames_before, args.frames_after)
+    print("Summary plots generation complete!")
+
+
+if __name__ == "__main__":
+    main()
