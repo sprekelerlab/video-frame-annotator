@@ -332,12 +332,57 @@ class VideoFrameReviewer:
     def _frame_step_backward(self):
         """Step one frame backward."""
         if self.player:
-            self.player.frame_back_step()
+            try:
+                # Get current time and FPS
+                current_time = self.player.time_pos
+                fps = self.player.fps
+                if current_time is not None and fps is not None and fps > 0:
+                    # Calculate frame duration
+                    frame_duration = 1.0 / fps
+                    # Seek backward by one frame using command interface
+                    new_time = max(0, current_time - frame_duration)
+                    # Use command for frame-accurate seeking
+                    self.player.command("seek", new_time, "absolute", "exact")
+            except (AttributeError, KeyError, TypeError, ValueError, Exception):
+                # Fallback: adjust time_pos directly (less accurate but more compatible)
+                try:
+                    current_time = self.player.time_pos or 0
+                    fps = self.player.fps or 30.0
+                    frame_duration = 1.0 / fps
+                    self.player.time_pos = max(0, current_time - frame_duration)
+                except:
+                    pass
 
     def _frame_step_forward(self):
         """Step one frame forward."""
         if self.player:
-            self.player.frame_step()
+            try:
+                # Get current time and FPS
+                current_time = self.player.time_pos
+                fps = self.player.fps
+                duration = self.player.duration
+                if current_time is not None and fps is not None and fps > 0:
+                    # Calculate frame duration
+                    frame_duration = 1.0 / fps
+                    # Seek forward by one frame using command interface
+                    new_time = current_time + frame_duration
+                    if duration is not None:
+                        new_time = min(duration, new_time)
+                    # Use command for frame-accurate seeking
+                    self.player.command("seek", new_time, "absolute", "exact")
+            except (AttributeError, KeyError, TypeError, ValueError, Exception):
+                # Fallback: adjust time_pos directly (less accurate but more compatible)
+                try:
+                    current_time = self.player.time_pos or 0
+                    fps = self.player.fps or 30.0
+                    duration = self.player.duration
+                    frame_duration = 1.0 / fps
+                    new_time = current_time + frame_duration
+                    if duration is not None:
+                        new_time = min(duration, new_time)
+                    self.player.time_pos = new_time
+                except:
+                    pass
 
     def _decrease_speed(self):
         """Decrease playback speed."""
