@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Generate summary plots showing frames around threat detection.
+Generate summary plots showing frames around marked frames.
 
 Creates montage plots with one row per trial, showing 3 frames before,
-the threat frame, and 3 frames after threat detection.
+the marked frame, and 3 frames after the marked frame.
 
 Plots are organized by the same folder structure as the source videos.
 """
@@ -91,9 +91,9 @@ def create_summary_plot(
     output_path : Path
         Where to save the plot
     frames_before : int, optional
-        Number of frames before threat to show (default: 3)
+        Number of frames before marked frame to show (default: 3)
     frames_after : int, optional
-        Number of frames after threat to show (default: 3)
+        Number of frames after marked frame to show (default: 3)
     """
     num_trials = len(trials_data)
     num_cols = frames_before + 1 + frames_after  # 7 total
@@ -115,10 +115,10 @@ def create_summary_plot(
     # Process each trial
     for row_idx, trial_data in enumerate(trials_data):
         trial_name = trial_data["trial"]
-        threat_frame = trial_data["frame"]
+        marked_frame = trial_data["frame"]
 
-        # Check if threat_frame is NaN (no frame selected)
-        is_nan = pd.isna(threat_frame) or (isinstance(threat_frame, float) and np.isnan(threat_frame)) or str(threat_frame).lower() == "nan"
+        # Check if marked_frame is NaN (no frame selected)
+        is_nan = pd.isna(marked_frame) or (isinstance(marked_frame, float) and np.isnan(marked_frame)) or str(marked_frame).lower() == "nan"
 
         # Find video file
         video_file = find_video_file(trial_name, video_folder)
@@ -159,11 +159,11 @@ def create_summary_plot(
                 frame_images.append(frame)
                 frame_numbers.append(frame_idx)
         else:
-            # Normal case: frames around threat frame
+            # Normal case: frames around marked frame
             # First column: first frame of video (frame 0)
             # Last column: last frame of video
-            # Middle columns: frames around threat frame
-            threat_frame_int = int(threat_frame)
+            # Middle columns: frames around marked frame
+            marked_frame_int = int(marked_frame)
             
             for col_idx in range(num_cols):
                 if col_idx == 0:
@@ -173,11 +173,11 @@ def create_summary_plot(
                     # Last column: last frame of video
                     target_frame = total_frames - 1
                 else:
-                    # Middle columns: frames around threat frame
-                    # Calculate offset from threat frame
-                    # Original layout had threat at frames_before, so offset = col_idx - frames_before
+                    # Middle columns: frames around marked frame
+                    # Calculate offset from marked frame
+                    # Original layout had marked frame at frames_before, so offset = col_idx - frames_before
                     offset = col_idx - frames_before
-                    target_frame = max(0, min(threat_frame_int + offset, total_frames - 1))
+                    target_frame = max(0, min(marked_frame_int + offset, total_frames - 1))
                 
                 frame = extract_frame(video_file, target_frame)
                 if frame is None:
@@ -203,7 +203,7 @@ def create_summary_plot(
                 else:
                     ax.set_title(f"Frame {frame_num_int}", color="white", fontsize=10)
 
-            # Highlight threat frame (at frames_before column) - only if not NaN
+            # Highlight marked frame (at frames_before column) - only if not NaN
             if not is_nan and col_idx == frames_before:
                 # Add red border
                 for spine in ax.spines.values():
@@ -213,7 +213,7 @@ def create_summary_plot(
     # Add title (use group name which mirrors folder structure)
     display_name = group_name.replace("/", " / ").replace("\\", " / ")
     fig.suptitle(
-        f"{display_name}\n(Red border = threat frame, No red = no threat)",
+        f"{display_name}\n(Red border = marked frame, No red = no frame selected)",
         color="white",
         fontsize=14,
         y=0.995,
@@ -236,9 +236,9 @@ def generate_all_plots(output_dir, video_folder, frames_before=3, frames_after=3
     video_folder : Path
         Root folder containing videos
     frames_before : int, optional
-        Number of frames before threat (default: 3)
+        Number of frames before marked frame (default: 3)
     frames_after : int, optional
-        Number of frames after threat (default: 3)
+        Number of frames after marked frame (default: 3)
     """
     results_csv = output_dir / "results.csv"
     if not results_csv.exists():
@@ -299,13 +299,13 @@ def main():
         "--frames-before",
         type=int,
         default=3,
-        help="Number of frames before threat to show (default: 3)",
+        help="Number of frames before marked frame to show (default: 3)",
     )
     parser.add_argument(
         "--frames-after",
         type=int,
         default=3,
-        help="Number of frames after threat to show (default: 3)",
+        help="Number of frames after marked frame to show (default: 3)",
     )
 
     args = parser.parse_args()

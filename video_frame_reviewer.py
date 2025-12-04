@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Video Frame Reviewer GUI
+Video Frame Annotator GUI
 
-A tool for manually annotating the first "threat detection" frame in behavioral videos.
+A tool for manually annotating a specific frame per video.
 Uses MPV for smooth, frame-accurate video playback.
 """
 
@@ -237,7 +237,7 @@ class VideoFrameReviewer:
 
         # Instructions label (moved to top)
         instructions = (
-            "Enter: Mark first threat frame | ESC: Skip (no threat detected) | "
+            "Enter: Mark frame | ESC: Skip (no frame selected) | "
             "Ctrl+Left/Right: Navigate videos | "
             "[/]: Speed | ,/.: Frame step | Left/Right: Seek"
         )
@@ -766,7 +766,7 @@ class VideoFrameReviewer:
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="Video Frame Reviewer - Manual annotation tool for threat detection frames"
+        description="Video Frame Annotator - Manual annotation tool for marking specific frames in videos"
     )
     parser.add_argument(
         "input_folder",

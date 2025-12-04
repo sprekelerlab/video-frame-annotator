@@ -1,6 +1,6 @@
-# Video Frame Reviewer
+# Video Frame Annotator
 
-A simple GUI tool for manually annotating the first "threat detection" frame in behavioral videos. Uses MPV for smooth, frame-accurate video playback with hardware acceleration support.
+A simple GUI tool for manually annotating a specific frame per video. Uses MPV for smooth, frame-accurate video playback with hardware acceleration support.
 
 ## Features
 
@@ -10,6 +10,15 @@ A simple GUI tool for manually annotating the first "threat detection" frame in 
 - **Resume support** - continue interrupted sessions
 - **Progress tracking** - see how many videos remain
 - **Summary visualizations** - generate frame montages (grouped by source folder structure)
+
+## Use Cases
+
+This tool can be used for any task requiring frame-level annotation of videos. Common examples include:
+
+- **Threat detection**: Mark the first frame where an animal shows a fear response
+- **Behavior onset**: Identify when a specific behavior begins
+- **Event marking**: Mark frames where specific events occur (e.g., stimulus presentation, response initiation)
+- **Quality control**: Flag frames with artifacts or specific characteristics
 
 ## Installation
 
@@ -82,7 +91,7 @@ python video_frame_reviewer.py --name "session1"
 
 ### Examples
 
-**New session with description:**
+**New session with description (threat detection example):**
 ```bash
 python video_frame_reviewer.py resources/nextcloud/facial_expression \
     --name "threat_onset_scoring" \
@@ -108,7 +117,7 @@ All controls work on both German and English keyboards:
 | Key | Action |
 |-----|--------|
 | **Space** | Play/Pause |
-| **Enter** | Mark current frame as threat detection & advance to next video |
+| **Enter** | Mark current frame & advance to next video |
 | **Left/Right** | Step one frame backward/forward |
 | **Shift+Left/Right** | Seek backward/forward 5 seconds |
 | **Up/Down** | Increase/Decrease playback speed (0.25x - 2.0x) |
@@ -146,16 +155,16 @@ Each scoring session creates an output folder with the following structure:
 
 ## Workflow
 
-1. **Start session**: Run the reviewer with your video folder
+1. **Start session**: Run the annotator with your video folder
 2. **Review videos**: Watch each video, navigate frame-by-frame if needed
-3. **Mark frames**: Press Enter when you identify the threat detection frame
+3. **Mark frames**: Press Enter when you identify the target frame
 4. **Auto-advance**: Next video loads automatically
 5. **Completion**: When done, optionally generate summary plots
 6. **Results**: Check `results.csv` for all annotations
 
 ## Summary Plots
 
-After completing a session, you can generate summary visualizations showing frames around the threat detection point.
+After completing a session, you can generate summary visualizations showing frames around the marked frame.
 
 ### Automatic Generation
 
@@ -179,12 +188,12 @@ python generate_summary_plots.py session1/ \
 
 - **One plot per group** (mirrors source folder structure, e.g., `349/hab.png`)
 - **One row per trial** (~20 rows)
-- **7 columns**: 3 frames before threat, threat frame (red border), 3 frames after
+- **7 columns**: 3 frames before marked frame, marked frame (red border), 3 frames after
 - **Black background** for easy viewing
 
 Options:
-- `--frames-before N`: Show N frames before threat (default: 3)
-- `--frames-after N`: Show N frames after threat (default: 3)
+- `--frames-before N`: Show N frames before marked frame (default: 3)
+- `--frames-after N`: Show N frames after marked frame (default: 3)
 
 ## Merging Annotations
 
