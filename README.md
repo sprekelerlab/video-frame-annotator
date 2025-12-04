@@ -24,47 +24,43 @@ This tool can be used for any task requiring frame-level annotation of videos. C
 
 ### Prerequisites
 
-- Conda (recommended)
-- The `environment.yml` uses **conda-forge** as the default channel
+- **MPV**: This tool uses `python-mpv` which requires an existing MPV installation. Install MPV using your system's package manager or from [mpv.io/installation/](https://mpv.io/installation/):
+
+  **macOS:**
+  ```bash
+  brew install mpv
+  ```
+
+  **Debian/Ubuntu:**
+  ```bash
+  sudo apt update
+  sudo apt install mpv
+  ```
+
+  **Arch Linux:**
+  ```bash
+  sudo pacman -S mpv
+  ```
+
+  **Windows:**
+  - Using Scoop: `scoop install mpv`
+  - Using Chocolatey: `choco install mpvio`
+  - Or download from [mpv.io/installation/](https://mpv.io/installation/)
+
+- **Conda**: Required for managing the Python environment
 
 ### Setup
 
-1. Navigate to the video_frame_reviewer directory:
-```bash
-cd custom_scripts/video_frame_reviewer
-```
-
-2. (Optional) Set conda-forge as priority channel:
-```bash
-conda config --add channels conda-forge
-conda config --set channel_priority strict
-```
-
-3. Create the conda environment:
+1. Create the conda environment:
 ```bash
 conda env create -f environment.yml
 conda activate video-reviewer
 ```
 
-The environment file will:
-- Install `mpv` (libmpv library) from conda-forge
-- Install `python-mpv` (Python bindings) via pip (not available as conda package)
-- Install other dependencies (opencv, matplotlib, numpy, pandas) from conda-forge
-
-4. Verify MPV is installed:
+2. Verify MPV is installed:
 ```bash
 mpv --version
 ```
-
-### Platform-Specific Notes
-
-**Linux/macOS**: The conda `mpv` package should work out of the box.
-
-**Windows**: 
-- The conda `mpv` package from conda-forge should provide `libmpv.dll`
-- If you encounter issues, ensure `libmpv.dll` is in your PATH or next to `python.exe`
-- According to the [python-mpv documentation](https://pypi.org/project/python-mpv/), Windows shared library handling can be tricky
-- Alternative: Download MPV from [mpv.io](https://mpv.io/installation/) and ensure `libmpv.dll` is accessible
 
 ## Usage
 
@@ -242,9 +238,9 @@ This regenerates `results.csv` from the individual `per_trial/*.txt` files.
 ## Dependencies
 
 - Python >= 3.9
-- mpv (libmpv library) - installed from conda-forge
-- python-mpv (Python bindings) - installed via pip (not available as conda package)
-- opencv, matplotlib, numpy, pandas - installed from conda-forge
+- MPV (must be installed separately via system package manager or from [mpv.io/installation/](https://mpv.io/installation/))
+- python-mpv (Python bindings for MPV, installed via pip)
+- opencv, matplotlib, numpy, pandas (installed from conda-forge)
 
-All dependencies are listed in `environment.yml`. The environment uses **conda-forge** as the default channel, with `python-mpv` installed via pip within the conda environment.
+All Python dependencies are listed in `environment.yml`. This tool uses `python-mpv` to interface with your existing MPV installation.
 
