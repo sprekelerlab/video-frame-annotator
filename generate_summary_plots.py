@@ -113,6 +113,9 @@ def create_summary_plot(
         trial_name = trial_data["trial"]
         threat_frame = trial_data["frame"]
 
+        # Check if threat_frame is NaN (no frame selected)
+        is_nan = pd.isna(threat_frame) or (isinstance(threat_frame, float) and np.isnan(threat_frame)) or str(threat_frame).lower() == "nan"
+
         # Find video file
         video_file = find_video_file(trial_name, video_folder)
         if not video_file:
@@ -121,26 +124,65 @@ def create_summary_plot(
             for col_idx in range(num_cols):
                 axes[row_idx, col_idx].imshow(np.zeros((100, 100, 3), dtype=np.uint8))
                 axes[row_idx, col_idx].axis("off")
+                # Set trial name as ylabel on first column
+                if col_idx == 0:
+                    axes[row_idx, col_idx].set_ylabel(trial_name, color="white", fontsize=8, rotation=0, ha="right", va="center")
             continue
+
+        # Get total frame count for equal spacing if no frame selected
+        cap = cv2.VideoCapture(str(video_file))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        cap.release()
 
         # Extract frames
         frame_images = []
-        for offset in range(-frames_before, frames_after + 1):
-            target_frame = max(0, threat_frame + offset)
-            frame = extract_frame(video_file, target_frame)
-            if frame is None:
-                # Use black frame if extraction failed
-                frame = np.zeros((100, 100, 3), dtype=np.uint8)
-            frame_images.append(frame)
+        frame_numbers = []  # Track frame numbers for display
+        
+        if is_nan:
+            # No frame selected: plot equally distanced frames
+            # e.g., if 50 frames: 0, 10, 20, 30, 40, 50
+            num_samples = num_cols
+            if total_frames > 0:
+                step = max(1, total_frames // (num_samples - 1)) if num_samples > 1 else total_frames
+                frame_indices = [min(i * step, total_frames - 1) for i in range(num_samples)]
+            else:
+                frame_indices = [0] * num_samples
+            
+            for frame_idx in frame_indices:
+                frame = extract_frame(video_file, frame_idx)
+                if frame is None:
+                    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+                frame_images.append(frame)
+                frame_numbers.append(frame_idx)
+        else:
+            # Normal case: frames around threat frame
+            for offset in range(-frames_before, frames_after + 1):
+                target_frame = max(0, min(threat_frame + offset, total_frames - 1))
+                frame = extract_frame(video_file, target_frame)
+                if frame is None:
+                    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+                frame_images.append(frame)
+                frame_numbers.append(target_frame)
 
         # Display frames
-        for col_idx, frame_img in enumerate(frame_images):
+        for col_idx, (frame_img, frame_num) in enumerate(zip(frame_images, frame_numbers)):
             ax = axes[row_idx, col_idx]
             ax.imshow(frame_img)
             ax.axis("off")
 
-            # Highlight threat frame (middle column)
-            if col_idx == frames_before:
+            # Set trial name as ylabel on first column (small font)
+            if col_idx == 0:
+                ax.set_ylabel(trial_name, color="white", fontsize=8, rotation=0, ha="right", va="center")
+
+            # Set frame number as title (only on first row to avoid repetition)
+            if row_idx == 0:
+                if not is_nan and col_idx == frames_before:
+                    ax.set_title(f"Frame {frame_num}", color="red", fontsize=10, weight="bold")
+                else:
+                    ax.set_title(f"Frame {frame_num}", color="white", fontsize=10)
+
+            # Highlight threat frame (middle column) - only if not NaN
+            if not is_nan and col_idx == frames_before:
                 # Add red border
                 for spine in ax.spines.values():
                     spine.set_edgecolor("red")
@@ -199,6 +241,9 @@ def generate_all_plots(output_dir, video_folder, frames_before=3, frames_after=3
     grouped = df.groupby("group")
 
     for group_name, group in grouped:
+        # Convert frame column to numeric, keeping NaN values
+        group = group.copy()
+        group["frame"] = pd.to_numeric(group["frame"], errors="coerce")
         trials_data = group[["trial", "frame"]].to_dict("records")
 
         # Create output path mirroring the group structure

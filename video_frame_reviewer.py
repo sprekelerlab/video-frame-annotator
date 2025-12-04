@@ -15,6 +15,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
+
 try:
     import mpv
 except ImportError:
@@ -83,27 +84,56 @@ class VideoFrameReviewer:
         # Setup GUI
         self.root = tk.Tk()
         self.root.title("Video Frame Reviewer")
-        self.root.geometry("400x200")
+        # Set larger initial size to accommodate embedded video
+        self.root.geometry("1200x800")
         self.root.configure(bg="black")
+        
+        # Video container frame for MPV embedding
+        self.video_frame = None
 
         # Create info display
         self._create_gui()
 
-        # Bind keyboard shortcuts (DE/EN keyboard compatible)
-        self.root.bind("<space>", lambda e: self._toggle_play())
-        self.root.bind("<Return>", lambda e: self._mark_frame())
-        # Arrow keys: Left/Right for frame stepping, Shift+Left/Right for seeking
-        self.root.bind("<Left>", lambda e: self._frame_step_backward())
-        self.root.bind("<Right>", lambda e: self._frame_step_forward())
-        self.root.bind("<Shift-Left>", lambda e: self._seek_backward())
-        self.root.bind("<Shift-Right>", lambda e: self._seek_forward())
-        # Up/Down for speed control
-        self.root.bind("<Up>", lambda e: self._increase_speed())
-        self.root.bind("<Down>", lambda e: self._decrease_speed())
-        self.root.bind("q", lambda e: self._quit())
-
-        # Focus on root window to capture keyboard events
+        # Bind Enter and ESC using bind_all to catch them even when MPV has focus
+        # Return "break" to prevent MPV from processing these keys
+        def handle_enter(event):
+            self._mark_frame()
+            return "break"
+        
+        def handle_esc(event):
+            self._mark_no_frame()
+            return "break"
+        
+        def handle_ctrl_left(event):
+            # Ctrl+Left: go to previous video
+            if self.current_idx > 0:
+                self.current_idx -= 1
+                self._load_video()
+            return "break"
+        
+        def handle_ctrl_right(event):
+            # Ctrl+Right: go to next video
+            if self.current_idx < len(self.videos) - 1:
+                self.current_idx += 1
+                self._load_video()
+            return "break"
+        
+        self.root.bind_all("<Return>", handle_enter)
+        self.root.bind_all("<KP_Enter>", handle_enter)
+        self.root.bind_all("<Escape>", handle_esc)
+        # Ctrl+Left/Right for video navigation
+        self.root.bind_all("<Control-Left>", handle_ctrl_left)
+        self.root.bind_all("<Control-Right>", handle_ctrl_right)
+        
+        # Keep root window focused so we can intercept Enter/ESC/Tab
         self.root.focus_set()
+        
+        # When clicking video area, keep root focused so we can intercept keys
+        self.video_frame.bind("<Button-1>", lambda e: self.root.focus_set())
+
+        # Ensure window is fully realized before loading video (needed for window embedding)
+        self.root.update_idletasks()
+        self.root.update()
 
         # Load first video
         self._load_video()
@@ -189,54 +219,51 @@ class VideoFrameReviewer:
 
     def _create_gui(self):
         """Create the GUI elements."""
+        # Top frame for info
+        top_frame = tk.Frame(self.root, bg="black")
+        top_frame.pack(fill=tk.X, pady=5)
+
         # Progress label
         self.progress_label = tk.Label(
-            self.root,
+            top_frame,
             text="",
             bg="black",
             fg="white",
-            font=("Arial", 14, "bold"),
         )
-        self.progress_label.pack(pady=10)
+        self.progress_label.pack(side=tk.LEFT, padx=10)
 
-        # Frame number label
-        self.frame_label = tk.Label(
-            self.root,
-            text="Frame: 0",
-            bg="black",
-            fg="yellow",
-            font=("Arial", 12),
-        )
-        self.frame_label.pack(pady=5)
-
-        # Video info label (only if not blind mode)
-        self.video_info_label = tk.Label(
-            self.root,
-            text="",
-            bg="black",
-            fg="gray",
-            font=("Arial", 10),
-        )
-        if not self.blind_mode:
-            self.video_info_label.pack(pady=5)
-
-        # Instructions label
+        # Instructions label (moved to top)
         instructions = (
-            "Space: Play/Pause | Enter: Mark frame & next | "
-            "Left/Right: Frame step | Shift+Left/Right: Seek | Up/Down: Speed | Q: Quit"
+            "Enter: Mark first threat frame | ESC: Skip (no threat detected) | "
+            "Ctrl+Left/Right: Navigate videos | "
+            "[/]: Speed | ,/.: Frame step | Left/Right: Seek"
         )
         self.instructions_label = tk.Label(
-            self.root,
+            top_frame,
             text=instructions,
             bg="black",
             fg="lightgray",
-            font=("Arial", 9),
-            wraplength=380,
+            wraplength=1180,
         )
-        self.instructions_label.pack(pady=10)
+        self.instructions_label.pack(side=tk.LEFT, padx=10)
+
+        # Video info label (only if not blind mode)
+        self.video_info_label = tk.Label(
+            top_frame,
+            text="",
+            bg="black",
+            fg="gray",
+        )
+        if not self.blind_mode:
+            self.video_info_label.pack(side=tk.LEFT, padx=10)
+
+        # Video container frame for MPV embedding
+        self.video_frame = tk.Frame(self.root, bg="black", highlightthickness=0)
+        self.video_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # Update progress display
         self._update_progress()
+
 
     def _update_progress(self):
         """Update progress display."""
@@ -244,19 +271,6 @@ class VideoFrameReviewer:
         current = self.current_idx + 1
         self.progress_label.config(text=f"Video {current}/{total}")
 
-    def _update_frame_display(self):
-        """Update frame number display."""
-        if self.player:
-            try:
-                # Get current time position and FPS to calculate frame
-                time_pos = self.player.time_pos
-                fps = self.player.fps
-                if time_pos is not None and fps is not None:
-                    frame = int(time_pos * fps)
-                    self.current_frame = frame
-                    self.frame_label.config(text=f"Frame: {frame}")
-            except (AttributeError, KeyError, TypeError, ValueError):
-                pass
 
     def _load_video(self):
         """Load the current video in MPV."""
@@ -292,135 +306,277 @@ class VideoFrameReviewer:
         if self.player:
             self.player.terminate()
 
-        self.player = mpv.MPV(
-            input_default_bindings=True,
-            input_vo_keyboard=True,
-        )
+        # Get window ID for embedding (platform-specific)
+        wid = None
+        if sys.platform.startswith('linux'):
+            # Linux/X11: use X11 window ID
+            try:
+                # Wait for video frame to be realized
+                self.root.update_idletasks()
+                wid = self.video_frame.winfo_id()
+            except:
+                pass
+        elif sys.platform == 'win32':
+            # Windows: use HWND
+            try:
+                self.root.update_idletasks()
+                wid = self.video_frame.winfo_id()
+            except:
+                pass
+        elif sys.platform == 'darwin':
+            # macOS: use NSView (requires special handling)
+            try:
+                self.root.update_idletasks()
+                # On macOS, we need to use the view's pointer
+                # This is more complex and may require additional setup
+                pass
+            except:
+                pass
 
-        # Register property observer for frame updates
-        @self.player.property_observer("time-pos")
-        def time_observer(_name, value):
-            if value is not None:
-                self.root.after(0, self._update_frame_display)
+        # Create MPV with window embedding if possible
+        # Enable MPV's built-in GUI (OSC) and keyboard input for speed display
+        mpv_options = {
+            'input_default_bindings': True,  # Enable MPV's default keyboard bindings
+            'input_vo_keyboard': True,  # Allow keyboard input to MPV
+            'osc': True,  # Enable on-screen controller (shows speed, time, etc.)
+            'script_opts': 'osc-visibility=always',  # Keep OSC always visible
+            # OSD status message (always visible like Shift+O)
+            'osd_level': 3,  # Always show OSD status message
+            'osd_status_msg': '${playback-time/full} / ${duration} (${percent-pos}%)\nframe: ${estimated-frame-number} / ${estimated-frame-count}',
+            # Optimize for frame-accurate stepping (especially backward)
+            'hr-seek': 'yes',  # Enable high-resolution seeking for better backward stepping
+            'hr-seek-framedrop': 'no',  # Don't drop frames during seeks (better accuracy)
+            'video-sync': 'display-resample',  # Better frame accuracy
+            'demuxer-readahead-secs': 30,  # Pre-buffer more frames (increased for backward stepping)
+            'cache': 'yes',  # Enable caching for faster seeks
+            'demuxer-max-bytes': '2GiB',  # Increase forward buffer size significantly
+            'demuxer-max-back-bytes': '2GiB',  # Increase backward buffer significantly for backward stepping
+            'demuxer-thread': 'yes',  # Use threading for demuxer (can help with backward)
+            'demuxer-cache-wait': 'yes',  # Wait for cache when seeking (helps maintain buffer)
+            # Try to keep more data in memory for backward stepping
+            'cache-secs': 30,  # Keep 30 seconds of video in cache
+            'cache-on-disk': 'no',  # Keep cache in memory (faster but uses more RAM)
+        }
+        
+        if wid is not None:
+            # Embed MPV in the Tkinter frame
+            mpv_options['wid'] = str(wid)
+            # Use X11 video output on Linux for embedding
+            # Note: x11 is needed for window embedding, but we can suppress the warning
+            if sys.platform.startswith('linux'):
+                mpv_options['vo'] = 'x11'
+                # Suppress x11 VO warning by setting log level
+                mpv_options['msg-level'] = 'vo/x11=error'  # Only show errors, not warnings
+
+        # Create MPV player - handle OSC gracefully if not available
+        try:
+            self.player = mpv.MPV(**mpv_options)
+        except (AttributeError, TypeError, ValueError) as e:
+            # OSC or script_opts not available, try without script_opts
+            mpv_options.pop('script_opts', None)
+            try:
+                self.player = mpv.MPV(**mpv_options)
+            except (AttributeError, TypeError, ValueError):
+                # OSC not available, create without it
+                mpv_options.pop('osc', None)
+                self.player = mpv.MPV(**mpv_options)
+        
+        # Ensure Shift+O works to show progress/time (if not already bound)
+        try:
+            # Try to bind Shift+O to show-progress command
+            self.player.command("keybind", "Shift+O", "show-progress")
+        except Exception:
+            # If binding fails, that's okay - Shift+O might already be bound by default
+            pass
+        
+        # Use MPV's key press callbacks to intercept Enter/ESC/Tab
+        # This works even when MPV has keyboard focus
+        @self.player.on_key_press('ENTER')
+        def handle_enter():
+            self.root.after(0, self._mark_frame)
+            return None  # Return None to prevent MPV from processing the key
+        
+        @self.player.on_key_press('KP_ENTER')
+        def handle_kp_enter():
+            self.root.after(0, self._mark_frame)
+            return None
+        
+        @self.player.on_key_press('ESC')
+        def handle_esc():
+            self.root.after(0, self._mark_no_frame)
+            return None  # Return None to prevent MPV from processing the key
+        
+        # Store reference to self for use in callbacks
+        app_self = self
+        
+        # Unbind TAB and backtick in MPV to prevent warnings and console toggling
+        try:
+            self.player.command("keybind", "TAB", "ignore")
+            self.player.command("keybind", "`", "ignore")  # Prevent console toggle
+        except Exception:
+            pass
+        
+        # Ctrl+Left/Right for video navigation - handle in MPV too
+        @self.player.on_key_press('Ctrl+LEFT')
+        def handle_ctrl_left_mpv():
+            # Ctrl+Left: go to previous video
+            if app_self.current_idx > 0:
+                app_self.current_idx -= 1
+                app_self.root.after(0, app_self._load_video)
+            return None  # Prevent MPV from processing
+        
+        @self.player.on_key_press('Ctrl+RIGHT')
+        def handle_ctrl_right_mpv():
+            # Ctrl+Right: go to next video
+            if app_self.current_idx < len(app_self.videos) - 1:
+                app_self.current_idx += 1
+                app_self.root.after(0, app_self._load_video)
+            return None  # Prevent MPV from processing
+
 
         # Load video file
         self.player.play(str(self.current_video))
         self.player.pause = True  # Start paused
 
+        # Wait for video to load
+        import time
+        time.sleep(0.2)  # Give MPV time to load video metadata
+        self.root.update_idletasks()
+        self.root.update()
+        
+        # Initialize current_frame using MPV's estimated-frame-number property
+        try:
+            # Try to get frame number directly from MPV
+            for _ in range(20):  # Try up to 20 times
+                try:
+                    frame_num = self.player.get_property('estimated-frame-number')
+                    if frame_num is not None:
+                        self.current_frame = int(frame_num)
+                        print(f"Initialized from estimated-frame-number: {self.current_frame}")
+                        break
+                except (AttributeError, TypeError):
+                    pass
+                time.sleep(0.05)
+                self.root.update_idletasks()
+            
+            # Fallback: calculate from time-pos and fps
+            if not hasattr(self, 'current_frame') or self.current_frame is None:
+                fps = self.player.fps or 30
+                time_pos = self.player.time_pos or 0
+                self.current_frame = int(time_pos * fps)
+                print(f"Initialized from time_pos: time_pos={time_pos}, fps={fps}, frame={self.current_frame}")
+        except Exception as e:
+            self.current_frame = 0
+            print(f"Error initializing frame: {e}")
+
+        # Register property observer to update current_frame when estimated-frame-number changes
+        # This is more accurate than time-pos for frame-accurate tracking
+        try:
+            @self.player.property_observer("estimated-frame-number")
+            def frame_observer(_name, value):
+                if value is not None:
+                    try:
+                        self.current_frame = int(value)
+                        print(f"Frame updated from estimated-frame-number: {self.current_frame}")
+                    except (ValueError, TypeError):
+                        pass
+        except Exception:
+            # Fallback to time-pos observer if estimated-frame-number not available
+            @self.player.property_observer("time-pos")
+            def time_observer(_name, value):
+                if value is not None and self.player:
+                    try:
+                        fps = self.player.fps or 30
+                        new_frame = int(value * fps)
+                        self.current_frame = new_frame
+                        print(f"Frame updated from time_pos: time_pos={value}, fps={fps}, frame={new_frame}")
+                    except (AttributeError, TypeError):
+                        pass
+
+        # Check if frame file already exists and seek to that frame
+        trial_name = self.current_video.stem
+        output_file = self.per_trial_dir / f"{trial_name}.txt"
+        if output_file.exists():
+            try:
+                with open(output_file, "r") as f:
+                    content = f.read().strip()
+                    # Check if it's NaN
+                    if content.lower() != "nan" and content:
+                        frame_num = int(content)
+                        # Seek to that frame
+                        fps = self.player.fps or 30
+                        time_pos = frame_num / fps
+                        self.player.time_pos = time_pos
+                        self.current_frame = frame_num
+            except (ValueError, AttributeError, TypeError):
+                # If reading fails, just start from beginning
+                pass
+
         # Update display
         self._update_progress()
-        self._update_frame_display()
-
-    def _toggle_play(self):
-        """Toggle play/pause."""
-        if self.player:
-            self.player.pause = not self.player.pause
-
-    def _seek_backward(self):
-        """Seek backward 5 seconds."""
-        if self.player:
-            current_time = self.player.time_pos or 0
-            self.player.time_pos = max(0, current_time - 5)
-
-    def _seek_forward(self):
-        """Seek forward 5 seconds."""
-        if self.player:
-            current_time = self.player.time_pos or 0
-            duration = self.player.duration or 0
-            self.player.time_pos = min(duration, current_time + 5)
-
-    def _frame_step_backward(self):
-        """Step one frame backward."""
-        if self.player:
-            try:
-                # Get current time and FPS
-                current_time = self.player.time_pos
-                fps = self.player.fps
-                if current_time is not None and fps is not None and fps > 0:
-                    # Calculate frame duration
-                    frame_duration = 1.0 / fps
-                    # Seek backward by one frame using command interface
-                    new_time = max(0, current_time - frame_duration)
-                    # Use command for frame-accurate seeking
-                    self.player.command("seek", new_time, "absolute", "exact")
-            except (AttributeError, KeyError, TypeError, ValueError, Exception):
-                # Fallback: adjust time_pos directly (less accurate but more compatible)
-                try:
-                    current_time = self.player.time_pos or 0
-                    fps = self.player.fps or 30.0
-                    frame_duration = 1.0 / fps
-                    self.player.time_pos = max(0, current_time - frame_duration)
-                except:
-                    pass
-
-    def _frame_step_forward(self):
-        """Step one frame forward."""
-        if self.player:
-            try:
-                # Get current time and FPS
-                current_time = self.player.time_pos
-                fps = self.player.fps
-                duration = self.player.duration
-                if current_time is not None and fps is not None and fps > 0:
-                    # Calculate frame duration
-                    frame_duration = 1.0 / fps
-                    # Seek forward by one frame using command interface
-                    new_time = current_time + frame_duration
-                    if duration is not None:
-                        new_time = min(duration, new_time)
-                    # Use command for frame-accurate seeking
-                    self.player.command("seek", new_time, "absolute", "exact")
-            except (AttributeError, KeyError, TypeError, ValueError, Exception):
-                # Fallback: adjust time_pos directly (less accurate but more compatible)
-                try:
-                    current_time = self.player.time_pos or 0
-                    fps = self.player.fps or 30.0
-                    duration = self.player.duration
-                    frame_duration = 1.0 / fps
-                    new_time = current_time + frame_duration
-                    if duration is not None:
-                        new_time = min(duration, new_time)
-                    self.player.time_pos = new_time
-                except:
-                    pass
-
-    def _decrease_speed(self):
-        """Decrease playback speed."""
-        if self.player:
-            current_speed = self.player.speed or 1.0
-            new_speed = max(0.25, current_speed - 0.25)
-            self.player.speed = new_speed
-
-    def _increase_speed(self):
-        """Increase playback speed."""
-        if self.player:
-            current_speed = self.player.speed or 1.0
-            new_speed = min(2.0, current_speed + 0.25)
-            self.player.speed = new_speed
 
     def _mark_frame(self):
         """Mark current frame and advance to next video."""
         if not self.player:
             return
 
-        # Get current frame number from time position and FPS
+        # Get current frame number - try multiple methods
+        frame = 0
         try:
-            # Use the stored current_frame if available (more accurate from frame stepping)
-            if hasattr(self, 'current_frame') and self.current_frame is not None:
-                frame = self.current_frame
-            else:
-                # Fallback to time-based calculation
-                time_pos = self.player.time_pos or 0
-                fps = self.player.fps or 30
-                frame = int(time_pos * fps)
-        except (AttributeError, KeyError, TypeError, ValueError):
-            frame = self.current_frame if hasattr(self, 'current_frame') else 0
+            # Method 1: Get directly from MPV's estimated-frame-number property
+            try:
+                frame_num = self.player.get_property('estimated-frame-number')
+                if frame_num is not None:
+                    frame = int(frame_num)
+                    self.current_frame = frame
+                    print(f"Got frame from estimated-frame-number: {frame}")
+                else:
+                    raise AttributeError("estimated-frame-number returned None")
+            except (AttributeError, TypeError, ValueError):
+                # Method 2: Use stored current_frame
+                if hasattr(self, 'current_frame') and self.current_frame is not None:
+                    frame = self.current_frame
+                    print(f"Using stored current_frame: {frame}")
+                else:
+                    # Method 3: Calculate from time position and FPS
+                    time_pos = self.player.time_pos
+                    fps = self.player.fps
+                    print(f"Calculating frame: time_pos={time_pos}, fps={fps}")
+                    if time_pos is not None and fps is not None and fps > 0:
+                        frame = int(time_pos * fps)
+                        self.current_frame = frame
+                    else:
+                        print(f"Warning: time_pos={time_pos}, fps={fps} - using 0")
+                        frame = 0
+        except Exception as e:
+            print(f"Error getting frame: {e}")
+            frame = getattr(self, 'current_frame', 0)
+
+        print(f"Marking frame: {frame}")
 
         # Save frame number to file
         trial_name = self.current_video.stem
         output_file = self.per_trial_dir / f"{trial_name}.txt"
         with open(output_file, "w") as f:
             f.write(str(frame))
+
+        # Advance to next video
+        self.current_idx += 1
+        if self.current_idx < len(self.videos):
+            self._load_video()
+        else:
+            self._finish_session()
+
+    def _mark_no_frame(self):
+        """Mark no frame selected (skip this video) and advance to next."""
+        if not self.player:
+            return
+
+        # Save empty file or NaN to indicate no frame selected
+        trial_name = self.current_video.stem
+        output_file = self.per_trial_dir / f"{trial_name}.txt"
+        with open(output_file, "w") as f:
+            f.write("NaN")  # Use NaN to indicate no frame selected
 
         # Advance to next video
         self.current_idx += 1
@@ -468,7 +624,15 @@ class VideoFrameReviewer:
         for txt_file in sorted(self.per_trial_dir.glob("*.txt")):
             trial_name = txt_file.stem
             with open(txt_file, "r") as f:
-                frame = int(f.read().strip())
+                frame_str = f.read().strip()
+                # Handle NaN or empty values
+                if frame_str in ["NaN", "nan", "NAN", ""]:
+                    frame = float('nan')
+                else:
+                    try:
+                        frame = int(frame_str)
+                    except ValueError:
+                        frame = float('nan')
 
             # Get relative path from input folder (for generic folder structure)
             relative_path = ""
@@ -550,7 +714,13 @@ def main():
     parser.add_argument(
         "input_folder",
         nargs="?",
-        help="Path to folder containing videos (e.g., resources/nextcloud/facial_expression)",
+        help="Path to folder containing videos (e.g., resources/nextcloud/facial_expression) [deprecated: use --input-folder]",
+    )
+    parser.add_argument(
+        "--input-folder",
+        "--input",
+        dest="input_folder_option",
+        help="Path to folder containing videos (alternative to positional argument)",
     )
     parser.add_argument("--name", required=True, help="Name for output folder")
     parser.add_argument("--description", default="", help="Description of scoring session")
@@ -564,8 +734,27 @@ def main():
         dest="continue_session",
         help="Continue from existing output folder",
     )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Remove output directory before starting (cannot be used with --continue)",
+    )
 
     args = parser.parse_args()
+
+    # Validate arguments
+    if args.clean and args.continue_session:
+        print("Error: --clean cannot be used with --continue")
+        sys.exit(1)
+
+    # Handle clean option
+    if args.clean:
+        output_dir = Path(args.name)
+        if output_dir.exists():
+            import shutil
+            print(f"Removing existing output directory: {output_dir}")
+            shutil.rmtree(output_dir)
+            print("Output directory removed.")
 
     # Handle continue session
     if args.continue_session:
@@ -574,7 +763,8 @@ def main():
             sys.exit(1)
         input_folder = None  # Will be loaded from config
     else:
-        input_folder = args.input_folder
+        # Prefer --input-folder option over positional argument
+        input_folder = args.input_folder_option or args.input_folder
         if not input_folder:
             # Open file dialog
             root = tk.Tk()
