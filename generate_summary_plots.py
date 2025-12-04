@@ -10,6 +10,10 @@ Plots are organized by the same folder structure as the source videos.
 
 import argparse
 import cv2
+import matplotlib
+
+# Use non-interactive backend to avoid X11 errors in headless environments
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -156,8 +160,25 @@ def create_summary_plot(
                 frame_numbers.append(frame_idx)
         else:
             # Normal case: frames around threat frame
-            for offset in range(-frames_before, frames_after + 1):
-                target_frame = max(0, min(threat_frame + offset, total_frames - 1))
+            # First column: first frame of video (frame 0)
+            # Last column: last frame of video
+            # Middle columns: frames around threat frame
+            threat_frame_int = int(threat_frame)
+            
+            for col_idx in range(num_cols):
+                if col_idx == 0:
+                    # First column: first frame of video
+                    target_frame = 0
+                elif col_idx == num_cols - 1:
+                    # Last column: last frame of video
+                    target_frame = total_frames - 1
+                else:
+                    # Middle columns: frames around threat frame
+                    # Calculate offset from threat frame
+                    # Original layout had threat at frames_before, so offset = col_idx - frames_before
+                    offset = col_idx - frames_before
+                    target_frame = max(0, min(threat_frame_int + offset, total_frames - 1))
+                
                 frame = extract_frame(video_file, target_frame)
                 if frame is None:
                     frame = np.zeros((100, 100, 3), dtype=np.uint8)
@@ -176,12 +197,13 @@ def create_summary_plot(
 
             # Set frame number as title (only on first row to avoid repetition)
             if row_idx == 0:
+                frame_num_int = int(frame_num)
                 if not is_nan and col_idx == frames_before:
-                    ax.set_title(f"Frame {frame_num}", color="red", fontsize=10, weight="bold")
+                    ax.set_title(f"Frame {frame_num_int}", color="red", fontsize=10, weight="bold")
                 else:
-                    ax.set_title(f"Frame {frame_num}", color="white", fontsize=10)
+                    ax.set_title(f"Frame {frame_num_int}", color="white", fontsize=10)
 
-            # Highlight threat frame (middle column) - only if not NaN
+            # Highlight threat frame (at frames_before column) - only if not NaN
             if not is_nan and col_idx == frames_before:
                 # Add red border
                 for spine in ax.spines.values():
@@ -191,7 +213,7 @@ def create_summary_plot(
     # Add title (use group name which mirrors folder structure)
     display_name = group_name.replace("/", " / ").replace("\\", " / ")
     fig.suptitle(
-        f"{display_name}\n(Red border = threat frame)",
+        f"{display_name}\n(Red border = threat frame, No red = no threat)",
         color="white",
         fontsize=14,
         y=0.995,

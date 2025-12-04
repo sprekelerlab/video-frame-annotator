@@ -26,7 +26,7 @@ except ImportError:
 class VideoFrameReviewer:
     """Main application class for video frame reviewing."""
 
-    def __init__(self, input_folder, output_name, description="", blind_mode=True, continue_session=None):
+    def __init__(self, input_folder, output_name, description="", blind_mode=True, continue_session=None, fps=None):
         """
         Initialize the video frame reviewer.
 
@@ -42,12 +42,15 @@ class VideoFrameReviewer:
             If True, hide trial information from reviewer (default: True)
         continue_session : str, optional
             Path to existing output folder to continue from
+        fps : float, optional
+            Override FPS (default: auto-detect from video container metadata)
         """
         self.input_folder = Path(input_folder) if input_folder else None
         self.output_name = output_name
         self.description = description
         self.blind_mode = blind_mode
         self.continue_session = continue_session
+        self.fps_override = fps
 
         # Setup output directory
         if continue_session:
@@ -271,6 +274,28 @@ class VideoFrameReviewer:
         current = self.current_idx + 1
         self.progress_label.config(text=f"Video {current}/{total}")
 
+    def _get_fps(self):
+        """
+        Get FPS for current video.
+        
+        Returns the user-provided FPS override if set, otherwise attempts to get
+        container FPS via expand-text command. Returns None if unavailable.
+        """
+        if self.fps_override is not None:
+            return self.fps_override
+        if self.player:
+            # Use expand-text to get container-fps (get_property doesn't work)
+            try:
+                fps_str = self.player.command('expand-text', '${container-fps}')
+                if fps_str:
+                    fps = float(fps_str)
+                    if fps > 0:
+                        return fps
+            except (AttributeError, TypeError, ValueError, Exception):
+                pass
+        
+        return None  # No default fallback - return None if unavailable
+
 
     def _load_video(self):
         """Load the current video in MPV."""
@@ -459,12 +484,24 @@ class VideoFrameReviewer:
                 time.sleep(0.05)
                 self.root.update_idletasks()
             
-            # Fallback: calculate from time-pos and fps
+            # Fallback: calculate from time-pos and fps, or use OSD
             if not hasattr(self, 'current_frame') or self.current_frame is None:
-                fps = self.player.fps or 30
-                time_pos = self.player.time_pos or 0
-                self.current_frame = int(time_pos * fps)
-                print(f"Initialized from time_pos: time_pos={time_pos}, fps={fps}, frame={self.current_frame}")
+                # Try OSD first (most accurate)
+                try:
+                    osd_text = self.player.command('expand-text', '${estimated-frame-number}')
+                    if osd_text:
+                        self.current_frame = int(osd_text)
+                        print(f"Initialized from OSD: {self.current_frame}")
+                except (AttributeError, TypeError, ValueError, Exception):
+                    # Fallback to time-pos calculation
+                    fps = self._get_fps()
+                    if fps is not None:
+                        time_pos = self.player.time_pos or 0
+                        self.current_frame = round(time_pos * fps)
+                        print(f"Initialized from time_pos: time_pos={time_pos}, fps={fps}, frame={self.current_frame}")
+                    else:
+                        self.current_frame = 0
+                        print(f"Could not initialize frame (no FPS available)")
         except Exception as e:
             self.current_frame = 0
             print(f"Error initializing frame: {e}")
@@ -486,10 +523,11 @@ class VideoFrameReviewer:
             def time_observer(_name, value):
                 if value is not None and self.player:
                     try:
-                        fps = self.player.fps or 30
-                        new_frame = int(value * fps)
-                        self.current_frame = new_frame
-                        print(f"Frame updated from time_pos: time_pos={value}, fps={fps}, frame={new_frame}")
+                        fps = self._get_fps()
+                        if fps is not None:
+                            new_frame = round(value * fps)
+                            self.current_frame = new_frame
+                            print(f"Frame updated from time_pos: time_pos={value}, fps={fps}, frame={new_frame}")
                     except (AttributeError, TypeError):
                         pass
 
@@ -504,10 +542,11 @@ class VideoFrameReviewer:
                     if content.lower() != "nan" and content:
                         frame_num = int(content)
                         # Seek to that frame
-                        fps = self.player.fps or 30
-                        time_pos = frame_num / fps
-                        self.player.time_pos = time_pos
-                        self.current_frame = frame_num
+                        fps = self._get_fps()
+                        if fps is not None:
+                            time_pos = frame_num / fps
+                            self.player.time_pos = time_pos
+                            self.current_frame = frame_num
             except (ValueError, AttributeError, TypeError):
                 # If reading fails, just start from beginning
                 pass
@@ -520,39 +559,57 @@ class VideoFrameReviewer:
         if not self.player:
             return
 
-        # Get current frame number - try multiple methods
-        frame = 0
+        # Get frame from OSD (most accurate - same as displayed)
+        frame_from_osd = None
         try:
-            # Method 1: Get directly from MPV's estimated-frame-number property
-            try:
-                frame_num = self.player.get_property('estimated-frame-number')
-                if frame_num is not None:
-                    frame = int(frame_num)
-                    self.current_frame = frame
-                    print(f"Got frame from estimated-frame-number: {frame}")
-                else:
-                    raise AttributeError("estimated-frame-number returned None")
-            except (AttributeError, TypeError, ValueError):
-                # Method 2: Use stored current_frame
-                if hasattr(self, 'current_frame') and self.current_frame is not None:
-                    frame = self.current_frame
-                    print(f"Using stored current_frame: {frame}")
-                else:
-                    # Method 3: Calculate from time position and FPS
-                    time_pos = self.player.time_pos
-                    fps = self.player.fps
-                    print(f"Calculating frame: time_pos={time_pos}, fps={fps}")
-                    if time_pos is not None and fps is not None and fps > 0:
-                        frame = int(time_pos * fps)
-                        self.current_frame = frame
-                    else:
-                        print(f"Warning: time_pos={time_pos}, fps={fps} - using 0")
-                        frame = 0
-        except Exception as e:
-            print(f"Error getting frame: {e}")
-            frame = getattr(self, 'current_frame', 0)
+            osd_text = self.player.command('expand-text', '${estimated-frame-number}')
+            if osd_text:
+                frame_from_osd = int(osd_text)
+        except (AttributeError, TypeError, ValueError, Exception) as e:
+            print(f"Error getting frame from OSD/expand-text: {e}")
 
-        print(f"Marking frame: {frame}")
+        # Get container FPS for diagnostic output
+        container_fps = None
+        try:
+            fps_str = self.player.command('expand-text', '${container-fps}')
+            if fps_str:
+                container_fps = float(fps_str)
+        except (AttributeError, TypeError, ValueError, Exception):
+            pass
+
+        # Determine which frame to save
+        if self.fps_override is not None:
+            # User provided --fps override: use time_pos * fps calculation
+            time_pos = None
+            frame_from_time = None
+            try:
+                time_pos = self.player.time_pos
+                if time_pos is not None:
+                    frame_from_time = round(time_pos * self.fps_override)
+            except (AttributeError, TypeError, ValueError) as e:
+                print(f"Error calculating frame from time_pos: {e}")
+            
+            frame = frame_from_time if frame_from_time is not None else 0
+            
+            # Diagnostic output
+            print(f"Frame calculation (--fps {self.fps_override} override):")
+            print(f"  time_pos: {time_pos}")
+            print(f"  fps (override): {self.fps_override}")
+            print(f"  container_fps: {container_fps}")
+            print(f"  frame_from_time (round(time_pos * fps)): {frame_from_time}")
+            print(f"  frame_from_osd (for comparison): {frame_from_osd}")
+            print(f"  Saving frame: {frame}")
+        else:
+            # Default: use OSD frame number (most accurate)
+            frame = frame_from_osd if frame_from_osd is not None else 0
+            
+            # Diagnostic output
+            print(f"Frame from OSD: {frame_from_osd}")
+            print(f"  container_fps: {container_fps}")
+            print(f"  Saving frame: {frame}")
+            
+            if frame_from_osd is None:
+                print(f"⚠️  WARNING: Could not get frame from OSD!")
 
         # Save frame number to file
         trial_name = self.current_video.stem
@@ -739,6 +796,14 @@ def main():
         action="store_true",
         help="Remove output directory before starting (cannot be used with --continue)",
     )
+    parser.add_argument(
+        "--fps",
+        type=float,
+        default=None,
+        help="Override frame calculation with time_pos * FPS instead of using MPV's OSD frame number. "
+             "By default, frame numbers are taken directly from MPV's OSD display (most accurate). "
+             "Use this flag only if you need to use a specific FPS for calculation.",
+    )
 
     args = parser.parse_args()
 
@@ -783,6 +848,7 @@ def main():
             description=args.description,
             blind_mode=not args.show_trial_info,
             continue_session=args.continue_session,
+            fps=args.fps,
         )
         reviewer.run()
     except Exception as e:
