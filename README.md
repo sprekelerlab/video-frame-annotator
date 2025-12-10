@@ -43,9 +43,16 @@ This tool can be used for any task requiring frame-level annotation of videos. C
   ```
 
   **Windows:**
-  - Using Scoop: `scoop install mpv`
-  - Using Chocolatey: `choco install mpvio`
-  - Or download from [mpv.io/installation/](https://mpv.io/installation/)
+  - Download the latest `x86_64` version (NOT `v3` unless you know you have new hardware) from:
+    - Runtime: https://sourceforge.net/projects/mpv-player-windows/files/64bit/
+    - Dev bundle: https://sourceforge.net/projects/mpv-player-windows/files/libmpv/ (same version as runtime, choose x86_64, NOT x86_64-v3)
+  - Extract both archives
+  - Copy all contents from the `mpv-dev` folder into the `mpv` folder (this ensures `libmpv-2.dll` is present)
+  - Before running `test_mpv.py` or `video_frame_reviewer.py`, set PATH in your terminal:
+    ```cmd
+    set PATH="C:\path\to\mpv";%PATH%
+    ```
+    **Note**: This must be set every time before running the script (it's temporary for that terminal session)
 
 - **Conda**: Required for managing the Python environment
 
@@ -61,6 +68,13 @@ conda activate video-reviewer
 ```bash
 mpv --version
 ```
+
+3. Verify Python can load libmpv (from the activated env):
+```bash
+python test_mpv.py
+```
+
+If this fails, see the [Troubleshooting](#troubleshooting) section below.
 
 ## Usage
 
@@ -114,9 +128,12 @@ All controls work on both German and English keyboards:
 |-----|--------|
 | **Space** | Play/Pause |
 | **Enter** | Mark current frame & advance to next video |
-| **Left/Right** | Step one frame backward/forward |
+| **ESC** | Skip video (no frame selected) & advance to next video |
+| **Ctrl+Left/Right** | Navigate to previous/next video |
+| **Left/Right** | Seek backward/forward |
+| **,** / **.** | Step one frame backward/forward |
 | **Shift+Left/Right** | Seek backward/forward 5 seconds |
-| **Up/Down** | Increase/Decrease playback speed (0.25x - 2.0x) |
+| **[** / **]** | Decrease/Increase playback speed |
 | **Q** | Quit (progress is saved) |
 
 ## Output Structure
@@ -210,6 +227,30 @@ This regenerates `results.csv` from the individual `per_trial/*.txt` files.
 5. **Multiple sessions**: Use different `--name` values for different reviewers or conditions
 
 ## Troubleshooting
+
+### Cannot find libmpv / MPVImportError
+
+If `test_mpv.py` fails with "Cannot find libmpv", the Python bindings can't locate the libmpv shared library:
+
+**Windows:**
+- Ensure you downloaded both the runtime and `mpv-dev` bundles from SourceForge (see Installation section above)
+- Ensure `libmpv-2.dll` is in the same folder as `mpv.exe` (copy from `mpv-dev` if needed)
+- Set PATH before running the script (see Installation section above)
+
+**macOS:**
+- If installed via Homebrew, set the library path:
+  ```bash
+  export DYLD_FALLBACK_LIBRARY_PATH="/opt/homebrew/lib:$DYLD_FALLBACK_LIBRARY_PATH"
+  ```
+  (Use `/usr/local/lib` for Intel Macs)
+- Add this to your `~/.zshrc` or `~/.bash_profile` to make it permanent
+
+**Linux:**
+- Ensure `libmpv.so` is installed (usually in `libmpv1` or `libmpv` package)
+- If needed, set `LD_LIBRARY_PATH`:
+  ```bash
+  export LD_LIBRARY_PATH="/usr/lib:$LD_LIBRARY_PATH"
+  ```
 
 ### MPV window doesn't appear
 

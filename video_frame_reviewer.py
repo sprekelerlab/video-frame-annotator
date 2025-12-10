@@ -10,17 +10,20 @@ import argparse
 import json
 import os
 import random
+import shutil
 import sys
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox
+from typing import Optional
+
+from mpv_utils import MPVImportError, _format_mpv_import_error
 
 
 try:
     import mpv
-except ImportError:
-    print("Error: python-mpv not installed. Install with: conda install -c conda-forge python-mpv")
-    sys.exit(1)
+except Exception as exc:
+    raise MPVImportError(_format_mpv_import_error(exc)) from exc
 
 
 class VideoFrameReviewer:
