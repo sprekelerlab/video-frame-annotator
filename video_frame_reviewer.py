@@ -58,7 +58,8 @@ class VideoFrameReviewer:
         self.debug = debug
         self.logger = logging.getLogger(__name__)
 
-        # Font size configuration
+        # Font configuration
+        self.font_family = 'TkDefaultFont'
         self.font_size_header = 12
         self.font_size_normal = 11
         self.font_size_small = 10
@@ -376,7 +377,7 @@ class VideoFrameReviewer:
             text="Keyboard Shortcuts",
             bg="black",
             fg="white",
-            font=("TkDefaultFont", self.font_size_header, "bold"),
+            font=(self.font_family, self.font_size_header, "bold"),
         )
         shortcuts_header.pack(pady=(0, 2))
 
@@ -391,7 +392,7 @@ class VideoFrameReviewer:
             relief=tk.FLAT,
             borderwidth=0,
             highlightthickness=0,
-            font=("TkDefaultFont", self.font_size_normal),
+            font=(self.font_family, self.font_size_normal),
             padx=10,
             pady=2,
         )
@@ -399,7 +400,7 @@ class VideoFrameReviewer:
         
         # Define color tags for different key groups (using matplotlib dark_background colors)
         # Create bold font for key names
-        bold_font = ("TkDefaultFont", 11, "bold")
+        bold_font = (self.font_family, self.font_size_normal, "bold")
         
         self.instructions_text.tag_config("mark", foreground="#b3de69", font=bold_font)  # Light green for marking
         self.instructions_text.tag_config("skip", foreground="#fa8174", font=bold_font)  # Coral/reddish-orange for skip
@@ -448,7 +449,7 @@ class VideoFrameReviewer:
             text="",
             bg="black",
             fg="gray",
-            font=("TkDefaultFont", self.font_size_normal),
+            font=(self.font_family, self.font_size_normal),
         )
         if not self.blind_mode:
             self.video_info_label.pack(pady=2)
@@ -463,7 +464,7 @@ class VideoFrameReviewer:
             text="Progress is saved automatically",
             bg="black",
             fg="lightgray",
-            font=("TkDefaultFont", self.font_size_small),
+            font=(self.font_family, self.font_size_small),
         )
         note_label.pack(side=tk.TOP, pady=(0, 5))
 
@@ -481,7 +482,7 @@ class VideoFrameReviewer:
             text="",
             bg="black",
             fg="white",
-            font=("TkDefaultFont", self.font_size_normal),
+            font=(self.font_family, self.font_size_normal),
         )
         self.video_label.pack()
 
@@ -491,7 +492,7 @@ class VideoFrameReviewer:
             text="",
             bg="black",
             fg="white",
-            font=("TkDefaultFont", self.font_size_normal),
+            font=(self.font_family, self.font_size_normal),
         )
         self.marking_status_label.pack()
 
@@ -501,7 +502,7 @@ class VideoFrameReviewer:
             text="",
             bg="black",
             fg="white",
-            font=("TkDefaultFont", self.font_size_normal),
+            font=(self.font_family, self.font_size_normal),
         )
         self.marked_label.pack()
 
@@ -516,7 +517,7 @@ class VideoFrameReviewer:
             command=self._go_to_previous_video,
             bg="gray",
             fg="white",
-            font=("TkDefaultFont", self.font_size_normal),
+            font=(self.font_family, self.font_size_normal),
             width=16,
             relief=tk.RAISED,
             bd=2,
@@ -530,7 +531,7 @@ class VideoFrameReviewer:
             command=self._go_to_next_video,
             bg="gray",
             fg="white",
-            font=("TkDefaultFont", self.font_size_normal),
+            font=(self.font_family, self.font_size_normal),
             width=16,
             relief=tk.RAISED,
             bd=2,
@@ -544,7 +545,7 @@ class VideoFrameReviewer:
             command=self._select_video,
             bg="gray",
             fg="white",
-            font=("TkDefaultFont", self.font_size_normal),
+            font=(self.font_family, self.font_size_normal),
             width=16,
             relief=tk.RAISED,
             bd=2,
@@ -558,7 +559,7 @@ class VideoFrameReviewer:
             command=self._go_to_next_unmarked_video,
             bg="gray",
             fg="white",
-            font=("TkDefaultFont", self.font_size_normal),
+            font=(self.font_family, self.font_size_normal),
             width=20,
             relief=tk.RAISED,
             bd=2,
@@ -572,7 +573,7 @@ class VideoFrameReviewer:
             command=self._generate_summary_plots,
             bg="#81b1d2",  # Light blue from matplotlib dark_background
             fg="black",
-            font=("TkDefaultFont", self.font_size_normal),
+            font=(self.font_family, self.font_size_normal),
             width=16,
             relief=tk.RAISED,
             bd=2,
@@ -586,7 +587,7 @@ class VideoFrameReviewer:
             command=self._quit,
             bg="#fa8174",  # Coral/reddish-orange from matplotlib dark_background
             fg="black",
-            font=("TkDefaultFont", self.font_size_normal),
+            font=(self.font_family, self.font_size_normal),
             width=10,
             relief=tk.RAISED,
             bd=2,
@@ -631,6 +632,35 @@ class VideoFrameReviewer:
         except (ValueError, IOError):
             return "Not marked"
 
+    def _has_unmarked_videos(self):
+        """
+        Check if there are any unmarked videos remaining.
+        
+        Returns
+        -------
+        bool
+            True if there are unmarked videos, False if all are marked.
+        """
+        scored_trials = set()
+        if self.per_trial_dir.exists():
+            for txt_file in self.per_trial_dir.glob("*.txt"):
+                # Check if file contains valid frame number (not just "NaN")
+                try:
+                    with open(txt_file, "r") as f:
+                        content = f.read().strip()
+                        if content and content.lower() != "nan":
+                            scored_trials.add(txt_file.stem)
+                except Exception:
+                    pass
+        
+        # Check if any video is unmarked
+        for video in self.videos:
+            trial_name = video.stem
+            if trial_name not in scored_trials:
+                return True
+        
+        return False  # All videos are marked
+
     def _update_progress(self):
         """Update progress display."""
         total = len(self.videos)
@@ -658,6 +688,9 @@ class VideoFrameReviewer:
             self.prev_button.config(state=tk.NORMAL if self.current_idx > 0 else tk.DISABLED)
         if hasattr(self, 'next_button'):
             self.next_button.config(state=tk.NORMAL if self.current_idx < len(self.videos) - 1 else tk.DISABLED)
+        if hasattr(self, 'next_unmarked_button'):
+            has_unmarked = self._has_unmarked_videos()
+            self.next_unmarked_button.config(state=tk.NORMAL if has_unmarked else tk.DISABLED)
 
     def _go_to_previous_video(self):
         """Navigate to previous video."""
@@ -1239,7 +1272,7 @@ class VideoFrameReviewer:
             pady=20,
             justify=tk.LEFT,
             wraplength=400,
-            font=("TkDefaultFont", self.font_size_normal),
+            font=(self.font_family, self.font_size_normal),
         )
         label.pack()
         
@@ -1257,7 +1290,7 @@ class VideoFrameReviewer:
             text="Continue",
             command=lambda: set_result("continue"),
             width=15,
-            font=("TkDefaultFont", self.font_size_normal),
+            font=(self.font_family, self.font_size_normal),
         )
         btn_continue.pack(side=tk.LEFT, padx=5)
         
@@ -1266,7 +1299,7 @@ class VideoFrameReviewer:
             text="Generate summary plots",
             command=lambda: set_result("generate_plots"),
             width=20,
-            font=("TkDefaultFont", self.font_size_normal),
+            font=(self.font_family, self.font_size_normal),
         )
         btn_generate.pack(side=tk.LEFT, padx=5)
         
@@ -1275,7 +1308,7 @@ class VideoFrameReviewer:
             text="Quit without plotting",
             command=lambda: set_result("quit"),
             width=18,
-            font=("TkDefaultFont", self.font_size_normal),
+            font=(self.font_family, self.font_size_normal),
         )
         btn_quit.pack(side=tk.LEFT, padx=5)
         
@@ -1393,7 +1426,7 @@ class VideoFrameReviewer:
             padx=20,
             pady=20,
             justify=tk.LEFT,
-            font=("TkDefaultFont", self.font_size_normal),
+            font=(self.font_family, self.font_size_normal),
         )
         label.pack()
         
@@ -1449,7 +1482,7 @@ class VideoFrameReviewer:
                 text="Plots generated successfully!",
                 padx=20,
                 pady=20,
-                font=("TkDefaultFont", self.font_size_normal),
+                font=(self.font_family, self.font_size_normal),
             )
             success_label.pack()
             
@@ -1467,7 +1500,7 @@ class VideoFrameReviewer:
                 text="Continue Reviewing",
                 command=lambda: set_choice("continue"),
                 width=18,
-                font=("TkDefaultFont", self.font_size_normal),
+                font=(self.font_family, self.font_size_normal),
             )
             continue_button.pack(side=tk.LEFT, padx=5)
             
@@ -1477,7 +1510,7 @@ class VideoFrameReviewer:
                 text="Quit",
                 command=lambda: set_choice("quit"),
                 width=10,
-                font=("TkDefaultFont", self.font_size_normal),
+                font=(self.font_family, self.font_size_normal),
             )
             quit_button.pack(side=tk.LEFT, padx=5)
             
