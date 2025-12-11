@@ -78,3 +78,4 @@ def _format_mpv_import_error(exc: Exception) -> str:
         f"Original error: {exc}. "
         f"Tips: {tip_text}"
     )
+

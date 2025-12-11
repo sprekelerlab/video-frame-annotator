@@ -11,6 +11,8 @@ Plots are organized by the same folder structure as the source videos.
 import argparse
 import cv2
 import matplotlib
+from tqdm import tqdm
+import os
 
 # Use non-interactive backend to avoid X11 errors in headless environments
 matplotlib.use("Agg")
@@ -18,6 +20,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from pathlib import Path
+from tqdm.contrib.concurrent import process_map
 
 
 def extract_frame(video_path, frame_number):
@@ -100,7 +103,7 @@ def create_summary_plot(
 
     if num_trials == 0:
         print(f"No trials found for {group_name}")
-        return
+        return None
 
     # Create figure with black background
     fig, axes = plt.subplots(
@@ -222,7 +225,28 @@ def create_summary_plot(
     plt.tight_layout(rect=[0, 0, 1, 0.98])
     plt.savefig(output_path, facecolor="black", dpi=150, bbox_inches="tight")
     plt.close()
-    print(f"Created plot: {output_path}")
+    # Return output path for summary printing (don't print here - it interrupts progress bar)
+    return str(output_path)
+
+
+def _create_plot_wrapper(args):
+    """
+    Wrapper function for multiprocessing that unpacks arguments and calls create_summary_plot.
+
+    Parameters
+    ----------
+    args : tuple
+        Tuple containing (group_name, trials_data, video_folder, output_path, frames_before, frames_after)
+
+    Returns
+    -------
+    str
+        Path to created plot file
+    """
+    group_name, trials_data, video_folder, output_path, frames_before, frames_after = args
+    return create_summary_plot(
+        group_name, trials_data, video_folder, output_path, frames_before, frames_after
+    )
 
 
 def generate_all_plots(output_dir, video_folder, frames_before=3, frames_after=3):
@@ -262,6 +286,8 @@ def generate_all_plots(output_dir, video_folder, frames_before=3, frames_after=3
     # Group by the group column (mirrors source folder structure)
     grouped = df.groupby("group")
 
+    # Prepare all plot tasks as tuples for parallel processing
+    tasks = []
     for group_name, group in grouped:
         # Convert frame column to numeric, keeping NaN values
         group = group.copy()
@@ -281,9 +307,24 @@ def generate_all_plots(output_dir, video_folder, frames_before=3, frames_after=3
             output_subdir.mkdir(parents=True, exist_ok=True)
             output_path = output_subdir / f"{group_path.name}.png"
 
-        create_summary_plot(
-            group_name, trials_data, video_folder, output_path, frames_before, frames_after
+        tasks.append(
+            (group_name, trials_data, video_folder, output_path, frames_before, frames_after)
         )
+
+    # Process all plots in parallel with progress bar
+    num_workers = os.cpu_count() or 1  # Fallback to 1 if cpu_count() returns None
+    created_plots = process_map(
+        _create_plot_wrapper, 
+        tasks, 
+        max_workers=num_workers,
+        desc="Generating summary plots"
+    )
+    
+    # Print summary of created plots after progress bar completes
+    print("\nCreated plots:")
+    for plot_path in created_plots:
+        if plot_path:
+            print(f"  {plot_path}")
 
 
 def main():
@@ -318,6 +359,10 @@ def main():
 
     generate_all_plots(output_dir, video_folder, args.frames_before, args.frames_after)
     print("Summary plots generation complete!")
+    
+    # Check if running from GUI
+    if os.environ.get("VIDEO_FRAME_REVIEWER_GUI") == "1":
+        print("\n✓ You can return to the GUI window now.")
 
 
 if __name__ == "__main__":

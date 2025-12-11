@@ -124,17 +124,23 @@ python video_frame_reviewer.py --continue session1
 
 All controls work on both German and English keyboards:
 
+### MPV Playback Controls
+
 | Key | Action |
 |-----|--------|
 | **Space** | Play/Pause |
 | **Enter** | Mark current frame & advance to next video |
 | **ESC** | Skip video (no frame selected) & advance to next video |
-| **Ctrl+Left/Right** | Navigate to previous/next video |
-| **Left/Right** | Seek backward/forward |
+| **Left/Right** | Jump 75 frames backward/forward |
+| **Shift+Left/Right** | Jump 15 frames backward/forward |
 | **,** / **.** | Step one frame backward/forward |
-| **Shift+Left/Right** | Seek backward/forward 5 seconds |
 | **[** / **]** | Decrease/Increase playback speed |
-| **Q** | Quit (progress is saved) |
+| **1** / **2** | Decrease/Increase contrast |
+| **3** / **4** | Decrease/Increase brightness |
+
+### Application Controls
+
+Navigation buttons are available in the GUI. Keyboard shortcuts (Ctrl+Left/Right, Ctrl+Space, Ctrl+P, Ctrl+Q) are shown on the buttons.
 
 ## Output Structure
 
