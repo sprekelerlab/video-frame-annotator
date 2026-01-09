@@ -30,6 +30,7 @@ This tool can be used for any task requiring frame-level annotation of videos. C
   ```bash
   brew install mpv
   ```
+  Note: On macOS this tool opens video in a separate MPV window by default (embedding via `--wid` is unreliable across Tk builds). If you want to try embedding anyway, run with `--embed` (experimental).
 
   **Debian/Ubuntu:**
   ```bash
@@ -98,6 +99,7 @@ python video_frame_reviewer.py --name "session1"
 - `--description`: Description of the scoring session (saved in README.md)
 - `--show-trial-info`: Show trial path information during review (default: blind mode)
 - `--continue <folder>`: Continue from an existing output folder
+- `--embed` / `--no-embed`: Force embedded MPV vs. separate MPV window (macOS defaults to `--no-embed`)
 
 ### Examples
 
@@ -290,4 +292,3 @@ If `test_mpv.py` fails with "Cannot find libmpv", the Python bindings can't loca
 - opencv, matplotlib, numpy, pandas (installed from conda-forge)
 
 All Python dependencies are listed in `environment.yml`. This tool uses `python-mpv` to interface with your existing MPV installation.
-

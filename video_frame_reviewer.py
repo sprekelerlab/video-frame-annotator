@@ -30,7 +30,17 @@ except Exception as exc:
 class VideoFrameReviewer:
     """Main application class for video frame reviewing."""
 
-    def __init__(self, input_folder, output_name, description="", blind_mode=True, continue_session=None, fps=None, debug=False):
+    def __init__(
+        self,
+        input_folder,
+        output_name,
+        description="",
+        blind_mode=True,
+        continue_session=None,
+        fps=None,
+        debug=False,
+        embed_video: Optional[bool] = None,
+    ):
         """
         Initialize the video frame reviewer.
 
@@ -57,9 +67,23 @@ class VideoFrameReviewer:
         self.fps_override = fps
         self.debug = debug
         self.logger = logging.getLogger(__name__)
+        if embed_video is None:
+            # Embedding libmpv into Tk works well on Linux/X11 and Windows.
+            # On macOS, Tk widgets often don't provide a stable NSView handle for `wid`,
+            # so default to a separate MPV window unless explicitly requested.
+            self.embed_video = sys.platform != "darwin"
+        else:
+            self.embed_video = embed_video
+        self._load_generation = 0
+        self._mpv_fallback_used = False
+        if sys.platform == "darwin" and not self.embed_video:
+            self.logger.info("macOS: using a separate MPV window (pass --embed to try embedding).")
 
-        # Font configuration
-        self.font_family = 'TkDefaultFont'
+        # Font configuration - use vector font for proper scaling
+        # Vector fonts scale properly, unlike bitmap fonts (TkDefaultFont on some systems)
+        # Common vector fonts on Linux: 'DejaVu Sans', 'Liberation Sans', 'Utopia', 'Arial'
+        # Change this if DejaVu Sans is not available on your system
+        self.font_family = 'DejaVu Sans'
         self.font_size_header = 12
         self.font_size_normal = 11
         self.font_size_small = 10
@@ -190,6 +214,258 @@ class VideoFrameReviewer:
 
         # Load first video
         self._load_video()
+
+    def _next_load_generation(self) -> int:
+        self._load_generation += 1
+        return self._load_generation
+
+    def _get_embed_wid(self) -> Optional[int]:
+        """
+        Best-effort: return a window handle suitable for MPV embedding.
+
+        Notes:
+        - Linux: X11 window ID
+        - Windows: HWND
+        - macOS: may work with an NSView pointer, but is unreliable across Tk builds
+        """
+        if not self.video_frame:
+            return None
+        try:
+            self.root.update_idletasks()
+            self.root.update()
+            wid = self.video_frame.winfo_id()
+            return int(wid) if wid is not None else None
+        except Exception:
+            return None
+
+    def _build_mpv_options(self, wid: Optional[int]) -> dict:
+        # Enable MPV's built-in GUI (OSC) and keyboard input for speed display
+        mpv_options = {
+            'input_default_bindings': True,  # Enable MPV's default keyboard bindings
+            'input_vo_keyboard': True,  # Allow keyboard input to MPV
+            'osc': True,  # Enable on-screen controller (shows speed, time, etc.)
+            'script_opts': 'osc-visibility=always',  # Keep OSC always visible
+            # OSD status message (always visible like Shift+O)
+            'osd_level': 3,  # Always show OSD status message
+            'osd_status_msg': '${playback-time/full} / ${duration} (${percent-pos}%)\nframe: ${estimated-frame-number} / ${estimated-frame-count}',
+            # Optimize for frame-accurate stepping (especially backward)
+            'hr-seek': 'yes',  # Enable high-resolution seeking for better backward stepping
+            'hr-seek-framedrop': 'no',  # Don't drop frames during seeks (better accuracy)
+            'video-sync': 'display-resample',  # Better frame accuracy
+            'demuxer-readahead-secs': 30,  # Pre-buffer more frames (increased for backward stepping)
+            'cache': 'yes',  # Enable caching for faster seeks
+            'demuxer-max-bytes': '2GiB',  # Increase forward buffer size significantly
+            'demuxer-max-back-bytes': '2GiB',  # Increase backward buffer significantly for backward stepping
+            'demuxer-thread': 'yes',  # Use threading for demuxer (can help with backward)
+            'demuxer-cache-wait': 'yes',  # Wait for cache when seeking (helps maintain buffer)
+            # Try to keep more data in memory for backward stepping
+            'cache-secs': 30,  # Keep 30 seconds of video in cache
+            'cache-on-disk': 'no',  # Keep cache in memory (faster but uses more RAM)
+        }
+
+        # On macOS when not embedding, force a window even though we start paused.
+        if sys.platform == "darwin" and not self.embed_video:
+            mpv_options['force-window'] = 'yes'
+            mpv_options['keep-open'] = 'yes'
+
+        if self.debug:
+            # Write MPV logs next to the scoring output for easier troubleshooting.
+            try:
+                mpv_options['log-file'] = str(self.output_dir / "mpv.log")
+                mpv_options['msg-level'] = 'all=warn'
+            except Exception:
+                pass
+
+        if wid is not None:
+            mpv_options['wid'] = str(wid)
+            if sys.platform.startswith('linux'):
+                # X11 VO is required for embedding on X11.
+                mpv_options['vo'] = 'x11'
+                mpv_options.setdefault('msg-level', 'vo/x11=error')
+
+        return mpv_options
+
+    def _register_mpv_key_handlers(self):
+        # Ensure Shift+O works to show progress/time (if not already bound)
+        try:
+            self.player.command("keybind", "Shift+O", "show-progress")
+        except Exception:
+            pass
+
+        @self.player.on_key_press('ENTER')
+        def handle_enter():
+            self.root.after(0, self._mark_frame)
+            return None
+
+        @self.player.on_key_press('KP_ENTER')
+        def handle_kp_enter():
+            self.root.after(0, self._mark_frame)
+            return None
+
+        @self.player.on_key_press('ESC')
+        def handle_esc():
+            self.root.after(0, self._mark_no_frame)
+            return None
+
+        app_self = self
+
+        try:
+            self.player.command("keybind", "TAB", "ignore")
+            self.player.command("keybind", "`", "ignore")
+            self.player.command("keybind", "q", "ignore")
+            self.player.command("keybind", "Ctrl+q", "ignore")
+            self.player.command("keybind", "Ctrl+Q", "ignore")
+        except Exception:
+            pass
+
+        @self.player.on_key_press('Ctrl+LEFT')
+        def handle_ctrl_left_mpv():
+            app_self.root.after(0, app_self._go_to_previous_video)
+            return None
+
+        @self.player.on_key_press('Ctrl+RIGHT')
+        def handle_ctrl_right_mpv():
+            app_self.root.after(0, app_self._go_to_next_video)
+            return None
+
+        @self.player.on_key_press('Ctrl+SPACE')
+        def handle_ctrl_space_mpv():
+            app_self.root.after(0, app_self._select_video)
+            return None
+
+        @self.player.on_key_press('Ctrl+Shift+SPACE')
+        def handle_ctrl_shift_space_mpv():
+            app_self.root.after(0, app_self._go_to_next_unmarked_video)
+            return None
+
+        @self.player.on_key_press('Ctrl+P')
+        def handle_ctrl_p_mpv_upper():
+            app_self.root.after(0, app_self._generate_summary_plots)
+            return None
+
+        @self.player.on_key_press('Ctrl+p')
+        def handle_ctrl_p_mpv_lower():
+            app_self.root.after(0, app_self._generate_summary_plots)
+            return None
+
+        @self.player.on_key_press('Q')
+        def handle_q_mpv():
+            return None
+
+        @self.player.on_key_press('Ctrl+Q')
+        def handle_ctrl_q_mpv_upper():
+            app_self.root.after(0, app_self._quit)
+            return None
+
+        @self.player.on_key_press('Ctrl+q')
+        def handle_ctrl_q_mpv_lower():
+            app_self.root.after(0, app_self._quit)
+            return None
+
+    def _register_frame_observer(self):
+        try:
+            @self.player.property_observer("estimated-frame-number")
+            def frame_observer(_name, value):
+                if value is not None:
+                    try:
+                        self.current_frame = int(value)
+                    except (ValueError, TypeError):
+                        pass
+        except Exception:
+            @self.player.property_observer("time-pos")
+            def time_observer(_name, value):
+                if value is not None and self.player:
+                    try:
+                        fps = self._get_fps()
+                        if fps is not None:
+                            self.current_frame = round(value * fps)
+                    except (AttributeError, TypeError):
+                        pass
+
+    def _check_vo_configured(self, load_generation: int, attempts_left: int = 30):
+        if load_generation != self._load_generation or not self.player:
+            return
+        try:
+            vo_ready = self.player.get_property('vo-configured')
+        except Exception:
+            vo_ready = None
+
+        if vo_ready:
+            return
+
+        if attempts_left <= 0:
+            # If embedding on macOS didn't configure a VO, fall back to a separate mpv window.
+            if sys.platform == "darwin" and self.embed_video and not self._mpv_fallback_used:
+                self.logger.warning("MPV embedding did not configure video output; falling back to separate window.")
+                self._mpv_fallback_used = True
+                self.embed_video = False
+                self._load_video()
+                return
+            return
+
+        self.root.after(50, lambda: self._check_vo_configured(load_generation, attempts_left - 1))
+
+    def _post_load_init(self, load_generation: int, attempts_left: int = 20):
+        if load_generation != self._load_generation or not self.player:
+            return
+
+        frame_num = None
+        try:
+            frame_num = self.player.get_property('estimated-frame-number')
+        except Exception:
+            frame_num = None
+
+        if frame_num is None:
+            try:
+                osd_text = self.player.command('expand-text', '${estimated-frame-number}')
+                if osd_text:
+                    frame_num = int(osd_text)
+            except Exception:
+                frame_num = None
+
+        if frame_num is None:
+            fps = self._get_fps()
+            try:
+                time_pos = self.player.time_pos or 0
+            except Exception:
+                time_pos = 0
+            if fps is not None:
+                frame_num = round(time_pos * fps)
+            else:
+                frame_num = 0
+
+        try:
+            self.current_frame = int(frame_num)
+        except Exception:
+            self.current_frame = 0
+
+        # If frame metadata isn't ready yet, try again a few times to improve accuracy.
+        if attempts_left > 0:
+            try:
+                if self.player.get_property('estimated-frame-number') is None:
+                    self.root.after(80, lambda: self._post_load_init(load_generation, attempts_left - 1))
+                    return
+            except Exception:
+                self.root.after(80, lambda: self._post_load_init(load_generation, attempts_left - 1))
+                return
+
+        # Seek to previously saved frame if present.
+        trial_name = self.current_video.stem
+        output_file = self.per_trial_dir / f"{trial_name}.txt"
+        if output_file.exists():
+            try:
+                with open(output_file, "r") as f:
+                    content = f.read().strip()
+                if content.lower() != "nan" and content:
+                    frame_num_saved = int(content)
+                    fps = self._get_fps()
+                    if fps is not None:
+                        self.player.time_pos = frame_num_saved / fps
+                        self.current_frame = frame_num_saved
+            except Exception:
+                pass
+
+        self._update_progress()
 
     def _find_videos(self):
         """Find all video files recursively in input folder."""
@@ -810,6 +1086,7 @@ class VideoFrameReviewer:
         if self.current_idx >= len(self.videos):
             self._finish_session()
             return
+        load_generation = self._next_load_generation()
 
         self.current_video = self.videos[self.current_idx]
 
@@ -838,271 +1115,32 @@ class VideoFrameReviewer:
         # Create MPV player
         if self.player:
             self.player.terminate()
+        wid = self._get_embed_wid() if self.embed_video else None
+        mpv_options = self._build_mpv_options(wid)
 
-        # Get window ID for embedding (platform-specific)
-        wid = None
-        if sys.platform.startswith('linux'):
-            # Linux/X11: use X11 window ID
-            try:
-                # Wait for video frame to be realized
-                self.root.update_idletasks()
-                wid = self.video_frame.winfo_id()
-            except:
-                pass
-        elif sys.platform == 'win32':
-            # Windows: use HWND
-            try:
-                self.root.update_idletasks()
-                wid = self.video_frame.winfo_id()
-            except:
-                pass
-        elif sys.platform == 'darwin':
-            # macOS: use NSView (requires special handling)
-            try:
-                self.root.update_idletasks()
-                # On macOS, we need to use the view's pointer
-                # This is more complex and may require additional setup
-                pass
-            except:
-                pass
-
-        # Create MPV with window embedding if possible
-        # Enable MPV's built-in GUI (OSC) and keyboard input for speed display
-        mpv_options = {
-            'input_default_bindings': True,  # Enable MPV's default keyboard bindings
-            'input_vo_keyboard': True,  # Allow keyboard input to MPV
-            'osc': True,  # Enable on-screen controller (shows speed, time, etc.)
-            'script_opts': 'osc-visibility=always',  # Keep OSC always visible
-            # OSD status message (always visible like Shift+O)
-            'osd_level': 3,  # Always show OSD status message
-            'osd_status_msg': '${playback-time/full} / ${duration} (${percent-pos}%)\nframe: ${estimated-frame-number} / ${estimated-frame-count}',
-            # Optimize for frame-accurate stepping (especially backward)
-            'hr-seek': 'yes',  # Enable high-resolution seeking for better backward stepping
-            'hr-seek-framedrop': 'no',  # Don't drop frames during seeks (better accuracy)
-            'video-sync': 'display-resample',  # Better frame accuracy
-            'demuxer-readahead-secs': 30,  # Pre-buffer more frames (increased for backward stepping)
-            'cache': 'yes',  # Enable caching for faster seeks
-            'demuxer-max-bytes': '2GiB',  # Increase forward buffer size significantly
-            'demuxer-max-back-bytes': '2GiB',  # Increase backward buffer significantly for backward stepping
-            'demuxer-thread': 'yes',  # Use threading for demuxer (can help with backward)
-            'demuxer-cache-wait': 'yes',  # Wait for cache when seeking (helps maintain buffer)
-            # Try to keep more data in memory for backward stepping
-            'cache-secs': 30,  # Keep 30 seconds of video in cache
-            'cache-on-disk': 'no',  # Keep cache in memory (faster but uses more RAM)
-        }
-        
-        if wid is not None:
-            # Embed MPV in the Tkinter frame
-            mpv_options['wid'] = str(wid)
-            # Use X11 video output on Linux for embedding
-            # Note: x11 is needed for window embedding, but we can suppress the warning
-            if sys.platform.startswith('linux'):
-                mpv_options['vo'] = 'x11'
-                # Suppress x11 VO warning by setting log level
-                mpv_options['msg-level'] = 'vo/x11=error'  # Only show errors, not warnings
-
-        # Create MPV player - handle OSC gracefully if not available
         try:
             self.player = mpv.MPV(**mpv_options)
-        except (AttributeError, TypeError, ValueError) as e:
-            # OSC or script_opts not available, try without script_opts
+        except (AttributeError, TypeError, ValueError):
             mpv_options.pop('script_opts', None)
             try:
                 self.player = mpv.MPV(**mpv_options)
             except (AttributeError, TypeError, ValueError):
-                # OSC not available, create without it
                 mpv_options.pop('osc', None)
                 self.player = mpv.MPV(**mpv_options)
-        
-        # Ensure Shift+O works to show progress/time (if not already bound)
-        try:
-            # Try to bind Shift+O to show-progress command
-            self.player.command("keybind", "Shift+O", "show-progress")
-        except Exception:
-            # If binding fails, that's okay - Shift+O might already be bound by default
-            pass
-        
-        # Use MPV's key press callbacks to intercept Enter/ESC/Tab
-        # This works even when MPV has keyboard focus
-        @self.player.on_key_press('ENTER')
-        def handle_enter():
-            self.root.after(0, self._mark_frame)
-            return None  # Return None to prevent MPV from processing the key
-        
-        @self.player.on_key_press('KP_ENTER')
-        def handle_kp_enter():
-            self.root.after(0, self._mark_frame)
-            return None
-        
-        @self.player.on_key_press('ESC')
-        def handle_esc():
-            self.root.after(0, self._mark_no_frame)
-            return None  # Return None to prevent MPV from processing the key
-        
-        # Store reference to self for use in callbacks
-        app_self = self
-        
-        # Unbind TAB and backtick in MPV to prevent warnings and console toggling
-        # Also unbind Q and Ctrl+Q to prevent MPV from quitting
-        try:
-            self.player.command("keybind", "TAB", "ignore")
-            self.player.command("keybind", "`", "ignore")  # Prevent console toggle
-            self.player.command("keybind", "q", "ignore")  # Prevent MPV from quitting on Q
-            self.player.command("keybind", "Ctrl+q", "ignore")  # Prevent MPV from handling Ctrl+Q
-            self.player.command("keybind", "Ctrl+Q", "ignore")  # Prevent MPV from handling Ctrl+Q (uppercase)
-        except Exception:
-            pass
-        
-        # Ctrl+Left/Right for video navigation - handle in MPV too
-        @self.player.on_key_press('Ctrl+LEFT')
-        def handle_ctrl_left_mpv():
-            # Ctrl+Left: go to previous video
-            app_self.root.after(0, app_self._go_to_previous_video)
-            return None  # Prevent MPV from processing
-        
-        @self.player.on_key_press('Ctrl+RIGHT')
-        def handle_ctrl_right_mpv():
-            # Ctrl+Right: go to next video
-            app_self.root.after(0, app_self._go_to_next_video)
-            return None  # Prevent MPV from processing
-        
-        @self.player.on_key_press('Ctrl+SPACE')
-        def handle_ctrl_space_mpv():
-            # Ctrl+Space: select video
-            app_self.root.after(0, app_self._select_video)
-            return None  # Prevent MPV from processing
-        
-        @self.player.on_key_press('Ctrl+Shift+SPACE')
-        def handle_ctrl_shift_space_mpv():
-            # Ctrl+Shift+Space: go to next unmarked video
-            app_self.root.after(0, app_self._go_to_next_unmarked_video)
-            return None  # Prevent MPV from processing
-        
-        @self.player.on_key_press('Ctrl+P')
-        def handle_ctrl_p_mpv_upper():
-            # Ctrl+P: generate summary plots
-            app_self.root.after(0, app_self._generate_summary_plots)
-            return None  # Prevent MPV from processing
-        
-        @self.player.on_key_press('Ctrl+p')
-        def handle_ctrl_p_mpv_lower():
-            # Ctrl+p: generate summary plots
-            app_self.root.after(0, app_self._generate_summary_plots)
-            return None  # Prevent MPV from processing
-        
-        @self.player.on_key_press('Q')
-        def handle_q_mpv():
-            # Q: prevent MPV from quitting, do nothing (use Ctrl+Q to quit app)
-            return None  # Prevent MPV from processing
-        
-        # Try both uppercase and lowercase Q for Ctrl+Q
-        @self.player.on_key_press('Ctrl+Q')
-        def handle_ctrl_q_mpv_upper():
-            # Ctrl+Q: quit application
-            app_self.root.after(0, app_self._quit)
-            return None  # Prevent MPV from processing
-        
-        @self.player.on_key_press('Ctrl+q')
-        def handle_ctrl_q_mpv_lower():
-            # Ctrl+q: quit application
-            app_self.root.after(0, app_self._quit)
-            return None  # Prevent MPV from processing
-        
 
+        self._register_mpv_key_handlers()
+        self._register_frame_observer()
 
-        # Load video file
+        # Load video file. Avoid blocking sleeps; macOS will show "beachball" if the UI thread is blocked.
         self.player.play(str(self.current_video))
-        self.player.pause = True  # Start paused
-
-        # Wait for video to load
-        import time
-        time.sleep(0.2)  # Give MPV time to load video metadata
-        self.root.update_idletasks()
-        self.root.update()
-        
-        # Initialize current_frame using MPV's estimated-frame-number property
         try:
-            # Try to get frame number directly from MPV
-            for _ in range(20):  # Try up to 20 times
-                try:
-                    frame_num = self.player.get_property('estimated-frame-number')
-                    if frame_num is not None:
-                        self.current_frame = int(frame_num)
-                        print(f"Initialized from estimated-frame-number: {self.current_frame}")
-                        break
-                except (AttributeError, TypeError):
-                    pass
-                time.sleep(0.05)
-                self.root.update_idletasks()
-            
-            # Fallback: calculate from time-pos and fps, or use OSD
-            if not hasattr(self, 'current_frame') or self.current_frame is None:
-                # Try OSD first (most accurate)
-                try:
-                    osd_text = self.player.command('expand-text', '${estimated-frame-number}')
-                    if osd_text:
-                        self.current_frame = int(osd_text)
-                        print(f"Initialized from OSD: {self.current_frame}")
-                except (AttributeError, TypeError, ValueError, Exception):
-                    # Fallback to time-pos calculation
-                    fps = self._get_fps()
-                    if fps is not None:
-                        time_pos = self.player.time_pos or 0
-                        self.current_frame = round(time_pos * fps)
-                        print(f"Initialized from time_pos: time_pos={time_pos}, fps={fps}, frame={self.current_frame}")
-                    else:
-                        self.current_frame = 0
-                        print(f"Could not initialize frame (no FPS available)")
-        except Exception as e:
-            self.current_frame = 0
-            print(f"Error initializing frame: {e}")
-
-        # Register property observer to update current_frame when estimated-frame-number changes
-        # This is more accurate than time-pos for frame-accurate tracking
-        try:
-            @self.player.property_observer("estimated-frame-number")
-            def frame_observer(_name, value):
-                if value is not None:
-                    try:
-                        self.current_frame = int(value)
-                    except (ValueError, TypeError):
-                        pass
+            # Preserve previous behavior: start paused immediately after loading.
+            self.player.pause = True
         except Exception:
-            # Fallback to time-pos observer if estimated-frame-number not available
-            @self.player.property_observer("time-pos")
-            def time_observer(_name, value):
-                if value is not None and self.player:
-                    try:
-                        fps = self._get_fps()
-                        if fps is not None:
-                            new_frame = round(value * fps)
-                            self.current_frame = new_frame
-                            print(f"Frame updated from time_pos: time_pos={value}, fps={fps}, frame={new_frame}")
-                    except (AttributeError, TypeError):
-                        pass
+            pass
 
-        # Check if frame file already exists and seek to that frame
-        trial_name = self.current_video.stem
-        output_file = self.per_trial_dir / f"{trial_name}.txt"
-        if output_file.exists():
-            try:
-                with open(output_file, "r") as f:
-                    content = f.read().strip()
-                    # Check if it's NaN
-                    if content.lower() != "nan" and content:
-                        frame_num = int(content)
-                        # Seek to that frame
-                        fps = self._get_fps()
-                        if fps is not None:
-                            time_pos = frame_num / fps
-                            self.player.time_pos = time_pos
-                            self.current_frame = frame_num
-            except (ValueError, AttributeError, TypeError):
-                # If reading fails, just start from beginning
-                pass
-
-        # Update display
-        self._update_progress()
+        self.root.after(0, lambda: self._check_vo_configured(load_generation))
+        self.root.after(100, lambda: self._post_load_init(load_generation))
 
     def _mark_frame(self):
         """Mark current frame and advance to next video."""
@@ -1618,6 +1656,17 @@ def main():
         action="store_true",
         help="Enable DEBUG level logging",
     )
+    embed_group = parser.add_mutually_exclusive_group()
+    embed_group.add_argument(
+        "--embed",
+        action="store_true",
+        help="Attempt to embed MPV into the GUI window (default on Linux/Windows; experimental on macOS).",
+    )
+    embed_group.add_argument(
+        "--no-embed",
+        action="store_true",
+        help="Do not embed MPV; open video in a separate MPV window (default on macOS).",
+    )
 
     args = parser.parse_args()
     
@@ -1670,6 +1719,12 @@ def main():
 
     # Create and run reviewer
     try:
+        embed_video = None
+        if args.embed:
+            embed_video = True
+        elif args.no_embed:
+            embed_video = False
+
         reviewer = VideoFrameReviewer(
             input_folder=input_folder,
             output_name=args.name,
@@ -1678,6 +1733,7 @@ def main():
             continue_session=args.continue_session,
             fps=args.fps,
             debug=args.debug,
+            embed_video=embed_video,
         )
         reviewer.run()
     except Exception as e:
@@ -1687,4 +1743,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
