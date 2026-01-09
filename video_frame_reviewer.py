@@ -145,6 +145,18 @@ class VideoFrameReviewer:
         # Create info display
         self._create_gui()
 
+        if self.debug:
+            self._enable_file_logging()
+
+        def report_callback_exception(exc, val, tb):
+            self.logger.error("Tk callback exception", exc_info=(exc, val, tb))
+            try:
+                messagebox.showerror("Error", f"An unexpected error occurred:\n{val}")
+            except Exception:
+                pass
+
+        self.root.report_callback_exception = report_callback_exception
+
         # Bind Enter and ESC using bind_all to catch them even when MPV has focus
         # Return "break" to prevent MPV from processing these keys
         def handle_enter(event):
@@ -208,12 +220,37 @@ class VideoFrameReviewer:
         # When clicking video area, keep root focused so we can intercept keys
         self.video_frame.bind("<Button-1>", lambda e: self.root.focus_set())
 
-        # Ensure window is fully realized before loading video (needed for window embedding)
-        self.root.update_idletasks()
-        self.root.update()
+        # On macOS, avoid calling into libmpv before Tk's event loop is running.
+        # Otherwise Tk can appear "grayed out" (mainloop not yet started) if libmpv blocks.
+        if sys.platform == "darwin":
+            self.root.after(0, self._load_video)
+        else:
+            # Ensure window is fully realized before loading video (needed for window embedding)
+            self.root.update_idletasks()
+            self.root.update()
+            self._load_video()
 
-        # Load first video
-        self._load_video()
+    def _enable_file_logging(self):
+        log_path = None
+        try:
+            log_path = self.output_dir / "app.log"
+        except Exception:
+            return
+
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers:
+            if isinstance(handler, logging.FileHandler) and getattr(handler, "baseFilename", None) == str(log_path):
+                return
+
+        try:
+            handler = logging.FileHandler(log_path)
+            handler.setLevel(logging.DEBUG)
+            handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+            root_logger.addHandler(handler)
+            root_logger.setLevel(logging.DEBUG)
+            self.logger.debug(f"Debug logging enabled: {log_path}")
+        except Exception:
+            pass
 
     def _next_load_generation(self) -> int:
         self._load_generation += 1
@@ -1082,6 +1119,7 @@ class VideoFrameReviewer:
         load_generation = self._next_load_generation()
 
         self.current_video = self.videos[self.current_idx]
+        self.logger.debug(f"Loading video idx={self.current_idx} path={self.current_video}")
 
         # Update video info if not blind mode
         if not self.blind_mode:
@@ -1121,10 +1159,12 @@ class VideoFrameReviewer:
                 mpv_options.pop('osc', None)
                 self.player = mpv.MPV(**mpv_options)
 
+        self.logger.debug("MPV instance created")
         self._register_mpv_key_handlers()
         self._register_frame_observer()
 
         # Load video file. Avoid blocking sleeps; macOS will show "beachball" if the UI thread is blocked.
+        self.logger.debug("Sending MPV play()")
         self.player.play(str(self.current_video))
         try:
             # Preserve previous behavior: start paused immediately after loading.
