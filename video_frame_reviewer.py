@@ -480,6 +480,31 @@ class VideoFrameReviewer:
         # Sort for reproducibility before randomization
         return sorted(videos)
 
+    def _is_trial_marked(self, trial_name: str) -> bool:
+        """
+        Return True if this trial has been explicitly marked.
+
+        Marked means:
+        - a frame number was saved, or
+        - "NaN" (or an empty file, legacy) was saved (explicitly marked as "no frame").
+        """
+        output_file = self.per_trial_dir / f"{trial_name}.txt"
+        if not output_file.exists():
+            return False
+        try:
+            content = output_file.read_text().strip()
+        except Exception:
+            return False
+        if not content:
+            return True
+        if content.lower() == "nan":
+            return True
+        try:
+            int(content)
+            return True
+        except ValueError:
+            return False
+
     def _find_first_unmarked_video(self):
         """
         Find the index of the first video that hasn't been scored yet.
@@ -489,15 +514,10 @@ class VideoFrameReviewer:
         int or None
             Index of first unmarked video, or None if all are marked.
         """
-        scored_trials = set()
-        if self.per_trial_dir.exists():
-            for txt_file in self.per_trial_dir.glob("*.txt"):
-                scored_trials.add(txt_file.stem)
-
         # Find first unmarked video
         for idx, video in enumerate(self.videos):
             trial_name = video.stem
-            if trial_name not in scored_trials:
+            if not self._is_trial_marked(trial_name):
                 return idx
 
         return None  # All videos are marked
@@ -917,25 +937,10 @@ class VideoFrameReviewer:
         bool
             True if there are unmarked videos, False if all are marked.
         """
-        scored_trials = set()
-        if self.per_trial_dir.exists():
-            for txt_file in self.per_trial_dir.glob("*.txt"):
-                # Check if file contains valid frame number (not just "NaN")
-                try:
-                    with open(txt_file, "r") as f:
-                        content = f.read().strip()
-                        if content and content.lower() != "nan":
-                            scored_trials.add(txt_file.stem)
-                except Exception:
-                    pass
-        
-        # Check if any video is unmarked
         for video in self.videos:
-            trial_name = video.stem
-            if trial_name not in scored_trials:
+            if not self._is_trial_marked(video.stem):
                 return True
-        
-        return False  # All videos are marked
+        return False
 
     def _update_progress(self):
         """Update progress display."""
@@ -986,22 +991,10 @@ class VideoFrameReviewer:
 
     def _go_to_next_unmarked_video(self):
         """Navigate to next unmarked video."""
-        scored_trials = set()
-        if self.per_trial_dir.exists():
-            for txt_file in self.per_trial_dir.glob("*.txt"):
-                # Check if file contains valid frame number (not just "NaN")
-                try:
-                    with open(txt_file, "r") as f:
-                        content = f.read().strip()
-                        if content and content.lower() != "nan":
-                            scored_trials.add(txt_file.stem)
-                except Exception:
-                    pass
-
         # Search forwards from current position
         for idx in range(self.current_idx + 1, len(self.videos)):
             trial_name = self.videos[idx].stem
-            if trial_name not in scored_trials:
+            if not self._is_trial_marked(trial_name):
                 self.current_idx = idx
                 self.logger.debug(f"Navigated to unmarked video {trial_name}")
                 self._load_video()
@@ -1010,7 +1003,7 @@ class VideoFrameReviewer:
         # If no unmarked video found after current, wrap around and search from beginning
         for idx in range(0, self.current_idx):
             trial_name = self.videos[idx].stem
-            if trial_name not in scored_trials:
+            if not self._is_trial_marked(trial_name):
                 self.current_idx = idx
                 self.logger.debug(f"Navigated to unmarked video {trial_name}")
                 self._load_video()
@@ -1244,6 +1237,13 @@ class VideoFrameReviewer:
         """Handle session completion."""
         # Don't terminate MPV - keep it running so user can continue reviewing
         # MPV will stay at the last video
+        first_unmarked = self._find_first_unmarked_video()
+        if first_unmarked is not None:
+            remaining = sum(1 for v in self.videos if not self._is_trial_marked(v.stem))
+            self.logger.info(f"Reached end but {remaining} videos are still unmarked; continuing at first unmarked.")
+            self.current_idx = first_unmarked
+            self._load_video()
+            return
 
         # Merge annotations
         self._merge_annotations()
