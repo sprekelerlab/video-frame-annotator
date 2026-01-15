@@ -399,6 +399,51 @@ class VideoFrameReviewer:
             app_self.root.after(0, app_self._quit)
             return None
 
+        # On Windows, embedded MPV doesn't receive key events, so bind them in Tkinter
+        if sys.platform == "win32":
+            self._register_tkinter_key_fallbacks()
+
+    def _register_tkinter_key_fallbacks(self):
+        """
+        Register Tkinter key bindings as fallback for Windows.
+        
+        On Windows, embedded MPV windows don't receive keyboard events reliably,
+        so we bind the keys in Tkinter and forward them to both MPV and our handlers.
+        """
+        # Bind navigation keys
+        self.root.bind("<Control-Left>", lambda e: self._go_to_previous_video())
+        self.root.bind("<Control-Right>", lambda e: self._go_to_next_video())
+        self.root.bind("<Control-space>", lambda e: self._select_video())
+        self.root.bind("<Control-Shift-space>", lambda e: self._go_to_next_unmarked_video())
+        
+        # Bind plot generation
+        self.root.bind("<Control-p>", lambda e: self._generate_summary_plots())
+        self.root.bind("<Control-P>", lambda e: self._generate_summary_plots())
+        
+        # Bind quit
+        self.root.bind("<Control-q>", lambda e: self._quit())
+        self.root.bind("<Control-Q>", lambda e: self._quit())
+        
+        # Forward playback keys to MPV
+        def forward_to_mpv(key_name):
+            try:
+                self.player.command("keypress", key_name)
+            except Exception:
+                pass
+        
+        # Arrow keys for frame navigation
+        self.root.bind("<Left>", lambda e: forward_to_mpv("LEFT"))
+        self.root.bind("<Right>", lambda e: forward_to_mpv("RIGHT"))
+        self.root.bind("<Down>", lambda e: forward_to_mpv("DOWN"))
+        self.root.bind("<Up>", lambda e: forward_to_mpv("UP"))
+        
+        # Common MPV playback keys
+        self.root.bind("<space>", lambda e: forward_to_mpv("SPACE"))
+        self.root.bind(",", lambda e: forward_to_mpv(","))
+        self.root.bind(".", lambda e: forward_to_mpv("."))
+        self.root.bind("[", lambda e: forward_to_mpv("["))
+        self.root.bind("]", lambda e: forward_to_mpv("]"))
+
     def _register_frame_observer(self):
         try:
             @self.player.property_observer("estimated-frame-number")
