@@ -130,7 +130,10 @@ def create_summary_plot(
             # Fill with black frames
             for col_idx in range(num_cols):
                 axes[row_idx, col_idx].imshow(np.zeros((100, 100, 3), dtype=np.uint8))
-                axes[row_idx, col_idx].axis("off")
+                axes[row_idx, col_idx].set_xticks([])
+                axes[row_idx, col_idx].set_yticks([])
+                for spine in axes[row_idx, col_idx].spines.values():
+                    spine.set_visible(False)
                 # Set trial name as ylabel on first column
                 if col_idx == 0:
                     axes[row_idx, col_idx].set_ylabel(trial_name, color="white", fontsize=8, rotation=0, ha="right", va="center")
@@ -192,19 +195,32 @@ def create_summary_plot(
         for col_idx, (frame_img, frame_num) in enumerate(zip(frame_images, frame_numbers)):
             ax = axes[row_idx, col_idx]
             ax.imshow(frame_img)
-            ax.axis("off")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            for spine in ax.spines.values():
+                spine.set_visible(False)
 
             # Set trial name as ylabel on first column (small font)
             if col_idx == 0:
-                ax.set_ylabel(trial_name, color="white", fontsize=8, rotation=0, ha="right", va="center")
+                ax.set_ylabel(
+                    trial_name,
+                    color="white",
+                    fontsize=6,
+                    rotation=90,
+                    ha="center",
+                    va="center",
+                    labelpad=12,
+                )
+                ax.yaxis.set_label_coords(-0.12, 0.5)
 
-            # Set frame number as title (only on first row to avoid repetition)
-            if row_idx == 0:
-                frame_num_int = int(frame_num)
-                if not is_nan and col_idx == frames_before:
-                    ax.set_title(f"Frame {frame_num_int}", color="red", fontsize=10, weight="bold")
-                else:
-                    ax.set_title(f"Frame {frame_num_int}", color="white", fontsize=10)
+            # Set frame number as title on all rows
+            frame_num_int = int(frame_num)
+            if not is_nan and col_idx == frames_before:
+                ax.set_title(
+                    f"Frame {frame_num_int}", color="red", fontsize=10, weight="bold"
+                )
+            else:
+                ax.set_title(f"Frame {frame_num_int}", color="white", fontsize=10)
 
             # Highlight marked frame (at frames_before column) - only if not NaN
             if not is_nan and col_idx == frames_before:
@@ -222,7 +238,7 @@ def create_summary_plot(
         y=0.995,
     )
 
-    plt.tight_layout(rect=[0, 0, 1, 0.98])
+    plt.tight_layout(rect=[0.08, 0, 1, 0.98])
     plt.savefig(output_path, facecolor="black", dpi=150, bbox_inches="tight")
     plt.close()
     # Return output path for summary printing (don't print here - it interrupts progress bar)
