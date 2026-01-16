@@ -125,12 +125,10 @@ class VideoFrameReviewer:
 
         # Find first unmarked video index
         self.current_idx = self._find_first_unmarked_video()
-        if self.current_idx is None:
-            messagebox.showinfo("Complete", "All videos have already been scored!")
-            sys.exit(0)
         self.current_video = None
         self.current_frame = 0
         self.player = None
+        self._prompt_continue_on_start = False
 
         # Setup GUI
         self.root = tk.Tk()
@@ -141,6 +139,20 @@ class VideoFrameReviewer:
         
         # Video container frame for MPV embedding
         self.video_frame = None
+
+        if self.current_idx is None:
+            if self.continue_session:
+                self.logger.info("All videos already scored; prompting to continue reviewing.")
+                self.current_idx = 0
+                self._prompt_continue_on_start = True
+            else:
+                messagebox.showinfo(
+                    "Complete",
+                    "All videos have already been scored!",
+                    parent=self.root,
+                )
+                self.root.destroy()
+                sys.exit(0)
 
         # Create info display
         self._create_gui()
@@ -222,13 +234,10 @@ class VideoFrameReviewer:
 
         # On macOS, avoid calling into libmpv before Tk's event loop is running.
         # Otherwise Tk can appear "grayed out" (mainloop not yet started) if libmpv blocks.
-        if sys.platform == "darwin":
-            self.root.after(0, self._load_video)
+        if self._prompt_continue_on_start:
+            self.root.after(0, self._prompt_continue_reviewing_then_load)
         else:
-            # Ensure window is fully realized before loading video (needed for window embedding)
-            self.root.update_idletasks()
-            self.root.update()
-            self._load_video()
+            self._start_initial_video_load()
 
     def _enable_file_logging(self):
         log_path = None
@@ -255,6 +264,27 @@ class VideoFrameReviewer:
     def _next_load_generation(self) -> int:
         self._load_generation += 1
         return self._load_generation
+
+    def _start_initial_video_load(self):
+        """Start loading the initial video once the window is realized."""
+        if sys.platform != "darwin":
+            try:
+                self.root.update_idletasks()
+                self.root.update()
+            except Exception:
+                pass
+        self.root.after(0, self._load_video)
+
+    def _prompt_continue_reviewing_then_load(self):
+        """Ask whether to continue reviewing, then load the first video if confirmed."""
+        choice = self._show_continue_reviewing_dialog()
+        if choice == "continue":
+            self._start_initial_video_load()
+        else:
+            try:
+                self.root.quit()
+            finally:
+                self.root.destroy()
 
     def _get_embed_wid(self) -> Optional[int]:
         """
@@ -1443,6 +1473,70 @@ class VideoFrameReviewer:
         
         return result["value"]
 
+    def _show_continue_reviewing_dialog(self):
+        """
+        Prompt the user to continue reviewing when every video has already been scored.
+        Returns "continue" if the user wants to keep reviewing, otherwise "quit".
+        """
+        dialog = tk.Toplevel(self.root)
+        dialog.title("All Videos Scored")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (dialog.winfo_width() // 2)
+        y = (dialog.winfo_screenheight() // 2) - (dialog.winfo_height() // 2)
+        dialog.geometry(f"+{x}+{y}")
+        dialog.lift()
+        dialog.focus_force()
+
+        result = {"value": "quit"}
+
+        label = tk.Label(
+            dialog,
+            text=(
+                "All videos in this session have already been scored.\n\n"
+                "Would you like to continue reviewing them from the start?"
+            ),
+            justify=tk.LEFT,
+            wraplength=400,
+            padx=20,
+            pady=20,
+            font=(self.font_family, self.font_size_normal),
+        )
+        label.pack()
+
+        button_frame = tk.Frame(dialog)
+        button_frame.pack(pady=(0, 20))
+
+        def set_result(value):
+            result["value"] = value
+            dialog.destroy()
+
+        continue_button = tk.Button(
+            button_frame,
+            text="Continue reviewing",
+            command=lambda: set_result("continue"),
+            width=20,
+            font=(self.font_family, self.font_size_normal),
+        )
+        continue_button.pack(side=tk.LEFT, padx=5)
+
+        quit_button = tk.Button(
+            button_frame,
+            text="Quit",
+            command=lambda: set_result("quit"),
+            width=10,
+            font=(self.font_family, self.font_size_normal),
+        )
+        quit_button.pack(side=tk.LEFT, padx=5)
+
+        dialog.protocol("WM_DELETE_WINDOW", lambda: set_result("quit"))
+        dialog.wait_window()
+
+        return result["value"]
+
     def _merge_annotations(self):
         """Merge individual txt files into CSV."""
         import pandas as pd
@@ -1782,6 +1876,18 @@ def main():
             print(f"Removing existing output directory: {output_dir}")
             shutil.rmtree(output_dir)
             print("Output directory removed.")
+
+    # Auto-continue if output folder already exists (unless --clean was used).
+    if not args.continue_session:
+        output_dir = Path(args.name)
+        if output_dir.exists():
+            config_path = output_dir / "config.json"
+            per_trial_dir = output_dir / "per_trial"
+            if config_path.exists() or per_trial_dir.exists():
+                logging.info(
+                    "Output folder exists; continuing session. Use --clean to start over."
+                )
+                args.continue_session = str(output_dir)
 
     # Handle continue session
     if args.continue_session:

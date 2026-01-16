@@ -7,7 +7,7 @@ A simple GUI tool for manually annotating a specific frame per video. Uses MPV f
 - **Frame-accurate video playback** using MPV (hardware-accelerated)
 - **Blind review mode** (default) - hides trial information to avoid bias
 - **Randomized video order** - prevents order effects
-- **Resume support** - continue interrupted sessions
+- **Resume support** - continue interrupted sessions (auto-continue when output folder already exists)
 - **Progress tracking** - see how many videos remain
 - **Summary visualizations** - generate frame montages (grouped by source folder structure)
 
@@ -87,6 +87,9 @@ Start a new scoring session:
 python video_frame_reviewer.py /path/to/facial_expression --name "session1"
 ```
 
+If the output folder already exists, the reviewer will automatically continue that session
+instead of starting over. Use `--clean` to remove the folder and start fresh.
+
 If no folder is provided, a file dialog will open:
 
 ```bash
@@ -99,6 +102,8 @@ python video_frame_reviewer.py --name "session1"
 - `--description`: Description of the scoring session (saved in README.md)
 - `--show-trial-info`: Show trial path information during review (default: blind mode)
 - `--continue <folder>`: Continue from an existing output folder
+- `--clean`: Remove output directory before starting (cannot be used with `--continue`)
+- `--yes`: Skip confirmation prompt when using `--clean`
 - `--embed` / `--no-embed`: Force embedded MPV vs. separate MPV window (macOS defaults to `--no-embed`)
 
 ### Examples
@@ -120,6 +125,16 @@ python video_frame_reviewer.py resources/nextcloud/facial_expression \
 **Continue previous session:**
 ```bash
 python video_frame_reviewer.py --continue session1
+```
+
+**Auto-continue when the output folder already exists:**
+```bash
+python video_frame_reviewer.py /path/to/facial_expression --name "session1"
+```
+
+**Start fresh even if the output folder exists:**
+```bash
+python video_frame_reviewer.py /path/to/facial_expression --name "session1" --clean
 ```
 
 ## Keyboard Controls
